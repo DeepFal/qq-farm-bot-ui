@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { AutomationConfig } from '@/stores/setting'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, ref, watch, watchEffect } from 'vue'
 import api from '@/api'
@@ -120,9 +121,9 @@ const localSettings = ref({
     email: false,
     fertilizer_gift: false,
     fertilizer_buy: false,
-    fertilizer_buy_type: 'organic' as string,
+    fertilizer_buy_type: 'organic' as AutomationConfig['fertilizer_buy_type'],
     fertilizer_buy_max: 10,
-    fertilizer_buy_mode: 'threshold' as string,
+    fertilizer_buy_mode: 'threshold' as AutomationConfig['fertilizer_buy_mode'],
     fertilizer_buy_threshold: 100,
     free_gifts: false,
     share_reward: false,
@@ -431,9 +432,9 @@ function syncLocalSettings() {
         email: false,
         fertilizer_gift: false,
         fertilizer_buy: false,
-        fertilizer_buy_type: 'organic' as string,
+        fertilizer_buy_type: 'organic' as AutomationConfig['fertilizer_buy_type'],
         fertilizer_buy_max: 10,
-        fertilizer_buy_mode: 'threshold' as string,
+        fertilizer_buy_mode: 'threshold' as AutomationConfig['fertilizer_buy_mode'],
         fertilizer_buy_threshold: 100,
         free_gifts: false,
         share_reward: false,
@@ -466,9 +467,9 @@ function syncLocalSettings() {
         email: false,
         fertilizer_gift: false,
         fertilizer_buy: false,
-        fertilizer_buy_type: 'organic' as string,
+        fertilizer_buy_type: 'organic' as AutomationConfig['fertilizer_buy_type'],
         fertilizer_buy_max: 10,
-        fertilizer_buy_mode: 'threshold' as string,
+        fertilizer_buy_mode: 'threshold' as AutomationConfig['fertilizer_buy_mode'],
         fertilizer_buy_threshold: 100,
         free_gifts: false,
         share_reward: false,
