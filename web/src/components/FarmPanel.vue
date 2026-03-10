@@ -281,7 +281,7 @@ onUnmounted(() => {
         <div v-else-if="!status?.connection?.connected" class="flex flex-col items-center justify-center gap-4 rounded-lg bg-white p-12 text-center text-gray-500 shadow dark:bg-gray-800">
           <div class="i-carbon-connection-signal-off text-4xl text-gray-400" />
           <div>
-            <div class="text-lg font-medium text-gray-700 dark:text-gray-300">
+            <div class="text-lg text-gray-700 font-medium dark:text-gray-300">
               账号未登录
             </div>
             <div class="mt-1 text-sm text-gray-400">

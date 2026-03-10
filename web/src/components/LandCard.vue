@@ -83,10 +83,10 @@ function getPlantSizeText(land: any) {
 
 <template>
   <div
-    class="relative flex h-full min-h-[140px] flex-col items-center rounded-lg border p-2 transition hover:shadow-md dark:border-gray-700"
+    class="relative h-full min-h-[140px] flex flex-col items-center border rounded-lg p-2 transition dark:border-gray-700 hover:shadow-md"
     :class="getLandStatusClass(land)"
   >
-    <div class="absolute left-1 top-1 font-mono text-[10px] leading-4 text-gray-400">
+    <div class="absolute left-1 top-1 text-[10px] text-gray-400 leading-4 font-mono">
       <template v-if="isMergedCard && Array.isArray(land.mergedLandIds) && land.mergedLandIds.length">
         <div
           v-for="(row, rowIndex) in land.mergedLandIds"
@@ -115,10 +115,10 @@ function getPlantSizeText(land: any) {
     </div>
 
     <div
-      class="flex w-full flex-1 flex-col items-center"
+      class="w-full flex flex-1 flex-col items-center"
       :class="isMergedCard ? 'justify-center pt-4' : 'justify-start pt-4'"
     >
-      <div class="mb-1 flex h-10 w-10 items-center justify-center">
+      <div class="mb-1 h-10 w-10 flex items-center justify-center">
         <img
           v-if="land.seedImage"
           :src="getSafeImageUrl(land.seedImage)"
