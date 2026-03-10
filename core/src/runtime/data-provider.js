@@ -101,6 +101,7 @@ function createDataProvider(options) {
         getFriendLands: (accountRef, gid) => callWorkerApi(resolveAccountRefId(accountRef), 'getFriendLands', gid),
         doFriendOp: (accountRef, gid, opType) => callWorkerApi(resolveAccountRefId(accountRef), 'doFriendOp', gid, opType),
         getBag: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getBag'),
+        getBagSeeds: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getBagSeeds'),
         getDailyGifts: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getDailyGiftOverview'),
         getSeeds: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getSeeds'),
 
@@ -128,6 +129,8 @@ function createDataProvider(options) {
             const snapshot = {
                 plantingStrategy,
                 preferredSeedId,
+                bagSeedPriority: body.bagSeedPriority,
+                bagSeedFallbackStrategy: body.bagSeedFallbackStrategy,
                 intervals: body.intervals,
                 friendQuietHours: body.friendQuietHours,
             };
@@ -137,6 +140,8 @@ function createDataProvider(options) {
             return {
                 strategy: store.getPlantingStrategy(accountId),
                 preferredSeed: store.getPreferredSeed(accountId),
+                bagSeedPriority: store.getBagSeedPriority(accountId),
+                bagSeedFallbackStrategy: store.getBagSeedFallbackStrategy(accountId),
                 intervals: store.getIntervals(accountId),
                 friendQuietHours: store.getFriendQuietHours(accountId),
                 configRevision: rev,

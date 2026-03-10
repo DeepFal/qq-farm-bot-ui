@@ -22,7 +22,7 @@ const { setInitialValues, resetSessionGains, recordOperation } = require('../ser
 const { initStatusBar, setStatusPlatform, statusData } = require('../services/status');
 const { setRecordGoldExpHook } = require('../services/status');
 const { cleanupTaskSystem, checkAndClaimTasks, getTaskClaimDailyState, getTaskDailyStateLikeApp, getGrowthTaskStateLikeApp } = require('../services/task');
-const { sellAllFruits, getBag, getBagItems, openFertilizerGiftPacksSilently } = require('../services/warehouse');
+const { sellAllFruits, getBag, getBagItems, getBagSeeds, openFertilizerGiftPacksSilently } = require('../services/warehouse');
 const { connect, cleanup, getWs, getUserState, networkEvents } = require('../utils/network');
 const { loadProto } = require('../utils/proto');
 const { setLogHook, log, toNum } = require('../utils/utils');
@@ -603,6 +603,9 @@ async function handleApiCall(msg) {
                 break;
             case 'getBag':
                 result = await require('../services/warehouse').getBagDetail();
+                break;
+            case 'getBagSeeds':
+                result = await getBagSeeds();
                 break;
             case 'setAutomation': {
                 const payload = args && args[0] ? args[0] : {};

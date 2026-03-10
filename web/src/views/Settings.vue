@@ -49,6 +49,9 @@ const currentAccountName = computed(() => {
   const acc = accounts.value.find((a: any) => a.id === currentAccountId.value)
   return acc ? (acc.name || acc.nick || acc.id) : null
 })
+const BAG_PRIORITY_STRATEGY = 'bag_priority'
+const DEFAULT_BAG_SEED_FALLBACK_STRATEGY = 'level'
+const BAG_FALLBACK_STRATEGY_VALUES = new Set(['preferred', 'level', 'max_exp', 'max_fert_exp', 'max_profit', 'max_fert_profit'])
 const allFertilizerLandTypes = ['gold', 'black', 'red', 'normal']
 
 const fertilizerBuyTypeOptions = [
@@ -97,9 +100,25 @@ function normalizeStealPlantBlacklist(input: unknown) {
   return normalized
 }
 
+function normalizeBagSeedPriority(input: unknown) {
+  const source = Array.isArray(input) ? input : []
+  const normalized: number[] = []
+  for (const item of source) {
+    const value = Number.parseInt(String(item), 10)
+    if (!Number.isFinite(value) || value <= 0)
+      continue
+    if (normalized.includes(value))
+      continue
+    normalized.push(value)
+  }
+  return normalized
+}
+
 const localSettings = ref({
   plantingStrategy: 'preferred',
   preferredSeedId: 0,
+  bagSeedPriority: [] as number[],
+  bagSeedFallbackStrategy: DEFAULT_BAG_SEED_FALLBACK_STRATEGY,
   intervals: { farmMin: 2, farmMax: 2, friendMin: 10, friendMax: 10 },
   friendQuietHours: { enabled: false, start: '23:00', end: '07:00' },
   automation: {
@@ -136,6 +155,22 @@ const localSettings = ref({
   },
 })
 
+interface BagSeedItem {
+  seedId: number
+  name: string
+  count: number
+  requiredLevel: number
+  image: string
+  plantSize: number
+}
+
+const bagSeeds = ref<BagSeedItem[]>([])
+const bagSeedsLoading = ref(false)
+const bagSeedsError = ref('')
+const bagSeedsLoadedAccountId = ref('')
+const loadingAccountSettings = ref(false)
+let bagSeedsRequestSerial = 0
+
 const friendDisabled = computed(() => !localSettings.value.automation.friend)
 const farmDisabled = computed(() => !localSettings.value.automation.farm_manage)
 
@@ -165,6 +200,36 @@ function parsePositiveInt(input: unknown): number | null {
   if (!Number.isFinite(value) || value <= 0)
     return null
   return value
+}
+
+function sortBagSeedsForDisplay(source: BagSeedItem[], priority: number[]) {
+  const indexMap = new Map<number, number>()
+  normalizeBagSeedPriority(priority).forEach((seedId, index) => {
+    indexMap.set(seedId, index)
+  })
+
+  return [...source].sort((a, b) => {
+    const aIndex = indexMap.has(a.seedId) ? indexMap.get(a.seedId)! : Number.MAX_SAFE_INTEGER
+    const bIndex = indexMap.has(b.seedId) ? indexMap.get(b.seedId)! : Number.MAX_SAFE_INTEGER
+    if (aIndex !== bIndex)
+      return aIndex - bIndex
+    if (a.requiredLevel !== b.requiredLevel)
+      return b.requiredLevel - a.requiredLevel
+    return a.seedId - b.seedId
+  })
+}
+
+function getDefaultBagSeedPriority(source: BagSeedItem[]) {
+  return sortBagSeedsForDisplay(source, []).map(seed => seed.seedId)
+}
+
+function mergeBagSeedPriority(source: unknown, bagSeedList: BagSeedItem[]) {
+  const merged = normalizeBagSeedPriority(source)
+  for (const seedId of getDefaultBagSeedPriority(bagSeedList)) {
+    if (!merged.includes(seedId))
+      merged.push(seedId)
+  }
+  return merged
 }
 
 function resolveStealCropLevel(seed: any): number | null {
@@ -378,6 +443,116 @@ function clearStealFilter() {
   onlyShowUnselectedStealCrops.value = false
   stealBlacklistSearch.value = ''
 }
+
+const isBagPriorityStrategy = computed(() => localSettings.value.plantingStrategy === BAG_PRIORITY_STRATEGY)
+const bagPrioritySeedSource = computed(() => bagSeeds.value.filter(seed => seed.plantSize === 1 && seed.count > 0))
+const bagPrioritySeedOptions = computed(() => sortBagSeedsForDisplay(
+  bagPrioritySeedSource.value,
+  localSettings.value.bagSeedPriority,
+))
+const bagSeedOrderIds = computed(() => bagPrioritySeedOptions.value.map(seed => seed.seedId))
+const skippedBagSeedCount = computed(() => bagSeeds.value.filter(seed => seed.count > 0 && seed.plantSize !== 1).length)
+
+function resetBagSeedState() {
+  bagSeedsRequestSerial += 1
+  bagSeeds.value = []
+  bagSeedsError.value = ''
+  bagSeedsLoading.value = false
+  bagSeedsLoadedAccountId.value = ''
+}
+
+async function loadBagSeeds(force = false, accountId = currentAccountId.value) {
+  if (!accountId || !isBagPriorityStrategy.value) {
+    resetBagSeedState()
+    return
+  }
+  if (!force && bagSeedsLoadedAccountId.value === accountId && bagSeeds.value.length > 0)
+    return
+
+  const requestId = ++bagSeedsRequestSerial
+  bagSeedsLoading.value = true
+  bagSeedsError.value = ''
+
+  try {
+    const { data } = await api.get('/api/bag/seeds', {
+      headers: { 'x-account-id': accountId },
+    })
+
+    if (requestId !== bagSeedsRequestSerial || accountId !== currentAccountId.value || !isBagPriorityStrategy.value)
+      return
+
+    if (!data?.ok) {
+      bagSeeds.value = []
+      bagSeedsLoadedAccountId.value = ''
+      bagSeedsError.value = data?.error || '背包种子加载失败'
+      return
+    }
+
+    const parsedSource: unknown[] = Array.isArray(data.data) ? data.data : []
+    const parsed = parsedSource
+      .map((item: unknown): BagSeedItem | null => {
+        const bagItem = (item && typeof item === 'object') ? item as Record<string, unknown> : {}
+        const seedId = parsePositiveInt(bagItem.seedId)
+        if (seedId === null)
+          return null
+        return {
+          seedId,
+          name: String(bagItem.name || `种子#${seedId}`),
+          count: Math.max(0, Number(bagItem.count || 0)),
+          requiredLevel: Math.max(0, Number(bagItem.requiredLevel || 0)),
+          image: String(bagItem.image || '').trim(),
+          plantSize: Math.max(1, Number(bagItem.plantSize || 1)),
+        }
+      })
+      .filter((item: BagSeedItem | null): item is BagSeedItem => item !== null)
+
+    bagSeeds.value = parsed
+    bagSeedsLoadedAccountId.value = accountId
+    localSettings.value.bagSeedPriority = mergeBagSeedPriority(
+      localSettings.value.bagSeedPriority,
+      bagPrioritySeedSource.value,
+    )
+  }
+  catch (error: any) {
+    if (requestId !== bagSeedsRequestSerial || accountId !== currentAccountId.value || !isBagPriorityStrategy.value)
+      return
+
+    bagSeeds.value = []
+    bagSeedsLoadedAccountId.value = ''
+    bagSeedsError.value = error?.response?.data?.error || error?.message || '背包种子加载失败'
+  }
+  finally {
+    if (requestId === bagSeedsRequestSerial)
+      bagSeedsLoading.value = false
+  }
+}
+
+function moveBagSeed(seedId: number, direction: -1 | 1) {
+  const nextOrder = [...bagSeedOrderIds.value]
+  const index = nextOrder.findIndex(id => id === seedId)
+  const targetIndex = index + direction
+  if (index < 0 || targetIndex < 0 || targetIndex >= nextOrder.length) {
+    return
+  }
+
+  const currentSeedId = nextOrder[index]!
+  const targetSeedId = nextOrder[targetIndex]!
+  nextOrder[index] = targetSeedId
+  nextOrder[targetIndex] = currentSeedId
+  const visibleSeedIdSet = new Set(nextOrder)
+  const hiddenSeedIds = normalizeBagSeedPriority(localSettings.value.bagSeedPriority)
+    .filter(id => !visibleSeedIdSet.has(id))
+  localSettings.value.bagSeedPriority = [...nextOrder, ...hiddenSeedIds]
+}
+
+function resetBagSeedPriority() {
+  const nextOrder = getDefaultBagSeedPriority(bagPrioritySeedSource.value)
+  const visibleSeedIdSet = new Set(nextOrder)
+  const hiddenSeedIds = normalizeBagSeedPriority(localSettings.value.bagSeedPriority)
+    .filter(id => !visibleSeedIdSet.has(id))
+  localSettings.value.bagSeedPriority = [...nextOrder, ...hiddenSeedIds]
+}
+
 const localOffline = ref({
   channel: 'webhook',
   reloginUrlMode: 'none',
@@ -406,6 +581,8 @@ function syncLocalSettings() {
     localSettings.value = JSON.parse(JSON.stringify({
       plantingStrategy: settings.value.plantingStrategy,
       preferredSeedId: settings.value.preferredSeedId,
+      bagSeedPriority: settings.value.bagSeedPriority,
+      bagSeedFallbackStrategy: settings.value.bagSeedFallbackStrategy,
       intervals: settings.value.intervals,
       friendQuietHours: settings.value.friendQuietHours,
       automation: settings.value.automation,
@@ -488,6 +665,13 @@ function syncLocalSettings() {
 
     localSettings.value.automation.fertilizer_land_types = normalizeFertilizerLandTypes(localSettings.value.automation.fertilizer_land_types)
     localSettings.value.automation.friend_steal_blacklist = normalizeStealPlantBlacklist(localSettings.value.automation.friend_steal_blacklist)
+    localSettings.value.bagSeedPriority = normalizeBagSeedPriority(localSettings.value.bagSeedPriority)
+    if (
+      localSettings.value.bagSeedFallbackStrategy === BAG_PRIORITY_STRATEGY
+      || !BAG_FALLBACK_STRATEGY_VALUES.has(localSettings.value.bagSeedFallbackStrategy)
+    ) {
+      localSettings.value.bagSeedFallbackStrategy = DEFAULT_BAG_SEED_FALLBACK_STRATEGY
+    }
 
     // Sync offline settings (global)
     if (settings.value.offlineReminder) {
@@ -505,14 +689,36 @@ function syncLocalSettings() {
 }
 
 async function loadData() {
-  if (currentAccountId.value) {
-    await settingStore.fetchSettings(currentAccountId.value)
+  const accountId = currentAccountId.value
+  if (!accountId) {
+    resetBagSeedState()
+    return
+  }
+
+  loadingAccountSettings.value = true
+  try {
+    resetBagSeedState()
+    await settingStore.fetchSettings(accountId)
+    if (accountId !== currentAccountId.value)
+      return
+
     syncLocalSettings()
+    if (accountId !== currentAccountId.value)
+      return
+
     // Always fetch seeds to ensure correct locked status for current account
     await Promise.all([
-      farmStore.fetchSeeds(currentAccountId.value),
+      farmStore.fetchSeeds(accountId),
       loadStealBlacklistAnalytics(),
     ])
+    if (accountId !== currentAccountId.value)
+      return
+
+    if (localSettings.value.plantingStrategy === BAG_PRIORITY_STRATEGY)
+      await loadBagSeeds(true, accountId)
+  }
+  finally {
+    loadingAccountSettings.value = false
   }
 }
 
@@ -538,7 +744,31 @@ const plantingStrategyOptions = [
   { label: '最大普通肥经验/时', value: 'max_fert_exp' },
   { label: '最大净利润/时', value: 'max_profit' },
   { label: '最大普通肥净利润/时', value: 'max_fert_profit' },
+  { label: '背包种子优先', value: BAG_PRIORITY_STRATEGY },
 ]
+
+const bagSeedFallbackStrategyOptions = computed(() =>
+  plantingStrategyOptions.filter(option => option.value !== BAG_PRIORITY_STRATEGY),
+)
+
+watch(() => localSettings.value.plantingStrategy, (strategy) => {
+  if (loadingAccountSettings.value)
+    return
+  if (strategy === BAG_PRIORITY_STRATEGY) {
+    loadBagSeeds()
+    return
+  }
+  resetBagSeedState()
+})
+
+watch(() => localSettings.value.bagSeedFallbackStrategy, (strategy) => {
+  if (
+    strategy === BAG_PRIORITY_STRATEGY
+    || !bagSeedFallbackStrategyOptions.value.some(option => option.value === strategy)
+  ) {
+    localSettings.value.bagSeedFallbackStrategy = DEFAULT_BAG_SEED_FALLBACK_STRATEGY
+  }
+})
 
 const channelOptions = [
   { label: 'Webhook(自定义接口)', value: 'webhook' },
@@ -628,7 +858,7 @@ const strategyPreviewLabel = ref<string | null>(null)
 
 watchEffect(async () => {
   const strategy = localSettings.value.plantingStrategy
-  if (strategy === 'preferred') {
+  if (strategy === 'preferred' || strategy === BAG_PRIORITY_STRATEGY) {
     strategyPreviewLabel.value = null
     return
   }
@@ -664,7 +894,10 @@ watchEffect(async () => {
     catch {
       strategyPreviewLabel.value = null
     }
+    return
   }
+
+  strategyPreviewLabel.value = null
 })
 
 async function saveAccountSettings() {
@@ -673,6 +906,16 @@ async function saveAccountSettings() {
 
   localSettings.value.automation.fertilizer_land_types = normalizeFertilizerLandTypes(localSettings.value.automation.fertilizer_land_types)
   localSettings.value.automation.friend_steal_blacklist = normalizeStealPlantBlacklist(localSettings.value.automation.friend_steal_blacklist)
+  if (isBagPriorityStrategy.value && bagSeedsLoadedAccountId.value === currentAccountId.value)
+    localSettings.value.bagSeedPriority = mergeBagSeedPriority(localSettings.value.bagSeedPriority, bagPrioritySeedSource.value)
+  else
+    localSettings.value.bagSeedPriority = normalizeBagSeedPriority(localSettings.value.bagSeedPriority)
+  if (
+    localSettings.value.bagSeedFallbackStrategy === BAG_PRIORITY_STRATEGY
+    || !bagSeedFallbackStrategyOptions.value.some(option => option.value === localSettings.value.bagSeedFallbackStrategy)
+  ) {
+    localSettings.value.bagSeedFallbackStrategy = DEFAULT_BAG_SEED_FALLBACK_STRATEGY
+  }
 
   saving.value = true
   try {
@@ -811,6 +1054,12 @@ async function handleTestOffline() {
               label="优先种植种子"
               :options="preferredSeedOptions"
             />
+            <BaseSelect
+              v-else-if="isBagPriorityStrategy"
+              v-model="localSettings.bagSeedFallbackStrategy"
+              label="第二优先策略"
+              :options="bagSeedFallbackStrategyOptions"
+            />
             <!-- 预览区域：与 BaseSelect 同结构同样式，避免切换策略时布局跳动 -->
             <div v-else class="flex flex-col gap-1.5">
               <label class="text-sm text-gray-700 font-medium dark:text-gray-300">策略选种预览</label>
@@ -819,6 +1068,103 @@ async function handleTestOffline() {
               >
                 <span class="truncate">{{ strategyPreviewLabel ?? '加载中...' }}</span>
                 <div class="i-carbon-chevron-down shrink-0 text-lg text-gray-400" />
+              </div>
+            </div>
+          </div>
+
+          <div v-if="isBagPriorityStrategy" class="border border-amber-200 rounded-lg bg-amber-50/70 p-3 space-y-3 dark:border-amber-800/60 dark:bg-amber-900/10">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div class="text-sm text-amber-900 font-semibold dark:text-amber-200">
+                  背包种子优先顺序
+                </div>
+                <p class="mt-1 text-xs text-amber-700/90 dark:text-amber-300/90">
+                  先按下方顺序消耗背包中的 1x1 种子；背包种子不足时，再按“第二优先策略”补种。
+                </p>
+                <p v-if="skippedBagSeedCount > 0" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  已自动忽略 {{ skippedBagSeedCount }} 个非 1x1 种子，它们不会参与背包优先策略。
+                </p>
+              </div>
+              <BaseButton
+                variant="outline"
+                size="sm"
+                type="button"
+                :disabled="bagPrioritySeedOptions.length === 0"
+                @click="resetBagSeedPriority"
+              >
+                重置顺序
+              </BaseButton>
+            </div>
+
+            <div
+              v-if="bagSeedsLoading"
+              class="flex items-center gap-2 border border-amber-200 rounded-lg bg-white/80 px-3 py-3 text-sm text-amber-700 dark:border-amber-700/60 dark:bg-gray-800/70 dark:text-amber-300"
+            >
+              <div class="i-svg-spinners-ring-resize text-base" />
+              <span>正在加载背包种子...</span>
+            </div>
+
+            <div
+              v-else-if="bagSeedsError"
+              class="flex flex-wrap items-center justify-between gap-3 border border-red-200 rounded-lg bg-red-50 px-3 py-3 text-sm text-red-600 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300"
+            >
+              <span>背包种子加载失败：{{ bagSeedsError }}</span>
+              <BaseButton
+                variant="outline"
+                size="sm"
+                type="button"
+                @click="loadBagSeeds(true)"
+              >
+                重新加载
+              </BaseButton>
+            </div>
+
+            <div
+              v-else-if="bagPrioritySeedOptions.length === 0"
+              class="border border-amber-300 rounded-lg border-dashed px-3 py-4 text-sm text-amber-700 dark:border-amber-700/60 dark:text-amber-300"
+            >
+              当前背包没有可用于背包优先策略的 1x1 种子。
+            </div>
+
+            <div v-else class="space-y-2">
+              <div
+                v-for="(seed, index) in bagPrioritySeedOptions"
+                :key="seed.seedId"
+                class="flex flex-wrap items-center justify-between gap-3 border border-amber-200 rounded-lg bg-white/90 px-3 py-3 dark:border-amber-800/60 dark:bg-gray-800/70"
+              >
+                <div class="min-w-0 flex items-center gap-3">
+                  <div class="h-8 w-8 flex shrink-0 items-center justify-center rounded-full bg-amber-100 text-sm text-amber-800 font-semibold dark:bg-amber-500/20 dark:text-amber-200">
+                    {{ index + 1 }}
+                  </div>
+                  <div class="min-w-0">
+                    <div class="truncate text-sm text-gray-900 font-medium dark:text-gray-100">
+                      {{ seed.name }}
+                    </div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400">
+                      Seed ID: {{ seed.seedId }} · Lv.{{ seed.requiredLevel }} · 数量 {{ seed.count }}
+                    </div>
+                  </div>
+                </div>
+                <div class="flex shrink-0 items-center gap-2">
+                  <BaseButton
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    :disabled="index === 0"
+                    @click="moveBagSeed(seed.seedId, -1)"
+                  >
+                    上移
+                  </BaseButton>
+                  <BaseButton
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    :disabled="index === bagPrioritySeedOptions.length - 1"
+                    @click="moveBagSeed(seed.seedId, 1)"
+                  >
+                    下移
+                  </BaseButton>
+                </div>
               </div>
             </div>
           </div>
