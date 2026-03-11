@@ -601,23 +601,16 @@ function formatSyncAllImportTime(timestamp: number) {
     </div>
 
     <div v-if="status?.connection?.connected && friends.length" class="mb-4">
-      <div class="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_220px]">
-        <div class="relative">
-          <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
-            <div class="i-carbon-search" />
-          </div>
-          <input
-            v-model="searchKeyword"
-            type="text"
-            class="w-full border border-gray-200 rounded-lg bg-white py-2 pl-10 pr-3 text-sm outline-none transition dark:border-gray-700 focus:border-blue-400 dark:bg-gray-800"
-            placeholder="搜索好友昵称 / GID / UIN"
-          >
+      <div class="relative">
+        <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
+          <div class="i-carbon-search" />
         </div>
-        <BaseSelect
-          v-model="friendSortMode"
-          label="排序方式"
-          :options="friendSortOptions"
-        />
+        <input
+          v-model="searchKeyword"
+          type="text"
+          class="w-full border border-gray-200 rounded-lg bg-white py-2 pl-10 pr-3 text-sm outline-none transition dark:border-gray-700 focus:border-blue-400 dark:bg-gray-800"
+          placeholder="搜索好友昵称 / GID / UIN"
+        >
       </div>
     </div>
 
@@ -980,14 +973,22 @@ function formatSyncAllImportTime(timestamp: number) {
     <div v-else class="space-y-6">
       <!-- 正常好友分组 -->
       <div v-if="normalFriends.length > 0">
-        <div class="mb-3 flex items-center gap-2">
-          <div class="i-carbon-user-favorite text-lg text-green-500" />
-          <h3 class="text-lg text-gray-700 font-semibold dark:text-gray-300">
-            正常好友
-          </h3>
-          <span class="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-600 dark:bg-green-900/30 dark:text-green-400">
-            {{ normalFriends.length }}
-          </span>
+        <div class="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div class="flex items-center gap-2">
+            <div class="i-carbon-user-favorite text-lg text-green-500" />
+            <h3 class="text-lg text-gray-700 font-semibold dark:text-gray-300">
+              正常好友
+            </h3>
+            <span class="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-600 dark:bg-green-900/30 dark:text-green-400">
+              {{ normalFriends.length }}
+            </span>
+          </div>
+          <div class="w-full lg:w-[220px]">
+            <BaseSelect
+              v-model="friendSortMode"
+              :options="friendSortOptions"
+            />
+          </div>
         </div>
         <div class="space-y-4">
           <div
