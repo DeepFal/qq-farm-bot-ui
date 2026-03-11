@@ -260,6 +260,27 @@ function getFriendStatusText(friend: any) {
   return info.length ? info.join(' ') : '无操作'
 }
 
+function getFriendLevel(friend: any) {
+  const level = Number.parseInt(String(friend?.level ?? ''), 10)
+  if (!Number.isFinite(level) || level <= 0)
+    return 0
+  return level
+}
+
+function getFriendGold(friend: any) {
+  const gold = Number.parseInt(String(friend?.gold ?? ''), 10)
+  if (!Number.isFinite(gold) || gold < 0)
+    return 0
+  return gold
+}
+
+function formatFriendGold(value: unknown) {
+  const gold = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(gold) || gold < 0)
+    return '0'
+  return gold.toLocaleString('zh-CN')
+}
+
 function getFriendAvatar(friend: any) {
   const direct = String(friend?.avatarUrl || friend?.avatar_url || '').trim()
   if (direct)
@@ -927,8 +948,20 @@ function formatSyncAllImportTime(timestamp: number) {
                   <div class="flex items-center gap-2 font-bold">
                     {{ friend.name }}
                   </div>
-                  <div class="text-xs text-gray-400">
-                    GID {{ friend.gid }}
+                  <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                    <span>GID {{ friend.gid }}</span>
+                    <span
+                      v-if="getFriendLevel(friend) > 0"
+                      class="rounded bg-gray-100 px-1.5 py-0.5 text-gray-500 dark:bg-gray-700 dark:text-gray-300"
+                    >
+                      Lv.{{ getFriendLevel(friend) }}
+                    </span>
+                    <span
+                      v-if="getFriendGold(friend) > 0"
+                      class="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+                    >
+                      金币 {{ formatFriendGold(friend.gold) }}
+                    </span>
                   </div>
                   <div class="text-sm" :class="getFriendStatusText(friend) !== '无操作' ? 'text-green-500 font-medium' : 'text-gray-400'">
                     {{ getFriendStatusText(friend) }}
@@ -1046,8 +1079,20 @@ function formatSyncAllImportTime(timestamp: number) {
                     {{ friend.name }}
                     <span class="rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-500 dark:bg-gray-700 dark:text-gray-400">已屏蔽</span>
                   </div>
-                  <div class="text-xs text-gray-400">
-                    GID {{ friend.gid }}
+                  <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                    <span>GID {{ friend.gid }}</span>
+                    <span
+                      v-if="getFriendLevel(friend) > 0"
+                      class="rounded bg-gray-200 px-1.5 py-0.5 text-gray-500 dark:bg-gray-700 dark:text-gray-300"
+                    >
+                      Lv.{{ getFriendLevel(friend) }}
+                    </span>
+                    <span
+                      v-if="getFriendGold(friend) > 0"
+                      class="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+                    >
+                      金币 {{ formatFriendGold(friend.gold) }}
+                    </span>
                   </div>
                   <div class="text-sm" :class="getFriendStatusText(friend) !== '无操作' ? 'text-green-500 font-medium' : 'text-gray-400'">
                     {{ getFriendStatusText(friend) }}

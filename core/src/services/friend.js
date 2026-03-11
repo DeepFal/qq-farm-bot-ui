@@ -1250,6 +1250,8 @@ async function getFriendsList() {
                 gid: toNum(f.gid),
                 name: f.remark || f.name || `GID:${toNum(f.gid)}`,
                 avatarUrl: String(f.avatar_url || '').trim(),
+                level: toNum(f.level),
+                gold: toNum(f.gold),
                 plant: f.plant ? {
                     stealNum: toNum(f.plant.steal_plant_num),
                     dryNum: toNum(f.plant.dry_num),
