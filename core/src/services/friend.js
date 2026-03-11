@@ -42,6 +42,8 @@ const DEFAULT_QQ_VISITOR_GID_SYNC_INTERVAL_MS = 10 * 60 * 1000;
 const MIN_QQ_VISITOR_GID_SYNC_RETRY_MS = 30 * 1000;
 const MAX_QQ_VISITOR_GID_SYNC_RETRY_MS = 2 * 60 * 1000;
 const INVALID_KNOWN_FRIEND_GID_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const KNOWN_QQ_FRIEND_FETCH_MISS_THRESHOLD = 3;
+const IGNORED_QQ_FRIEND_NAMES = new Set(['小小农夫']);
 
 // 操作限制状态 (从服务器响应中更新)
 // 操作类型ID (根据游戏代码):
@@ -65,6 +67,7 @@ let canGetHelpExp = true;
 let helpAutoDisabledByLimit = false;
 let lastVisitorGidSyncAt = 0;
 const invalidKnownFriendGidCooldownUntil = new Map();
+const knownQqFriendFetchMissCount = new Map();
 
 function normalizeStealPlantBlacklist(input) {
     const source = Array.isArray(input) ? input : [];
@@ -152,6 +155,22 @@ function isInvalidFriendAccessError(error) {
     return hasInvalidKeyword && parseRpcErrorCode(error) > 0;
 }
 
+function normalizeFriendName(name) {
+    return String(name || '').trim();
+}
+
+function isIgnoredQqFriendName(name) {
+    return IGNORED_QQ_FRIEND_NAMES.has(normalizeFriendName(name));
+}
+
+function shouldSyncKnownQqVisitorRecord(record, selfGid = 0) {
+    const gid = toNum(record && record.visitorGid);
+    if (gid <= 0) return false;
+    if (selfGid > 0 && gid === selfGid) return false;
+    if (isIgnoredQqFriendName(record && record.nick)) return false;
+    return true;
+}
+
 function postToMaster(payload) {
     try {
         if (process.send) {
@@ -187,6 +206,45 @@ function markKnownFriendGidInvalid(friendGid, nowMs = Date.now()) {
 function getInvalidKnownFriendGidSet(nowMs = Date.now()) {
     pruneInvalidKnownFriendGidCooldown(nowMs);
     return new Set(invalidKnownFriendGidCooldownUntil.keys());
+}
+
+function pruneKnownQqFriendFetchMissCount(currentKnownGids) {
+    const currentSet = new Set(normalizeFriendGids(currentKnownGids));
+    for (const gid of knownQqFriendFetchMissCount.keys()) {
+        if (!currentSet.has(gid)) {
+            knownQqFriendFetchMissCount.delete(gid);
+        }
+    }
+}
+
+function clearKnownQqFriendFetchMissCount(gids) {
+    for (const gid of normalizeFriendGids(gids)) {
+        knownQqFriendFetchMissCount.delete(gid);
+    }
+}
+
+function handleKnownQqFriendFetchMisses(requestedGids, returnedFriends) {
+    const requested = normalizeFriendGids(requestedGids);
+    if (requested.length === 0) return;
+
+    const returnedGids = normalizeFriendGids(
+        (Array.isArray(returnedFriends) ? returnedFriends : []).map(friend => friend && friend.gid),
+    );
+    const returnedSet = new Set(returnedGids);
+    clearKnownQqFriendFetchMissCount(returnedGids);
+
+    for (const gid of requested) {
+        if (returnedSet.has(gid)) continue;
+
+        const missCount = (knownQqFriendFetchMissCount.get(gid) || 0) + 1;
+        if (missCount < KNOWN_QQ_FRIEND_FETCH_MISS_THRESHOLD) {
+            knownQqFriendFetchMissCount.set(gid, missCount);
+            continue;
+        }
+
+        knownQqFriendFetchMissCount.delete(gid);
+        removeKnownFriendGid(gid, `GID:${gid}`, `get_game_friends_missing_${KNOWN_QQ_FRIEND_FETCH_MISS_THRESHOLD}_times`);
+    }
 }
 
 function getKnownFriendGidSyncIntervalMs() {
@@ -318,12 +376,18 @@ function buildFriendReply(friends) {
 }
 
 function syncKnownFriendGidsFromFriends(friends) {
-    const fetchedGids = normalizeFriendGids((Array.isArray(friends) ? friends : []).map(friend => friend && friend.gid));
+    const fetchedGids = normalizeFriendGids(
+        (Array.isArray(friends) ? friends : [])
+            .filter(friend => !isIgnoredQqFriendName(friend && friend.name) && !isIgnoredQqFriendName(friend && friend.remark))
+            .map(friend => friend && friend.gid),
+    );
     if (fetchedGids.length === 0) return [];
 
     clearInvalidKnownFriendGidMarks(fetchedGids);
+    clearKnownQqFriendFetchMissCount(fetchedGids);
 
     const current = normalizeFriendGids(getKnownFriendGids());
+    pruneKnownQqFriendFetchMissCount(current);
     const merged = normalizeFriendGids([...current, ...fetchedGids]);
     if (merged.length === current.length && merged.every((gid, index) => gid === current[index])) {
         return merged;
@@ -343,6 +407,7 @@ function syncKnownFriendGidsFromFriends(friends) {
 function getEffectiveKnownQqFriendGids() {
     const currentKnownGids = normalizeFriendGids(getKnownFriendGids());
     clearInvalidKnownFriendGidMarks(currentKnownGids);
+    pruneKnownQqFriendFetchMissCount(currentKnownGids);
 
     const invalidGidSet = getInvalidKnownFriendGidSet();
     return normalizeFriendGids([
@@ -360,9 +425,12 @@ async function syncKnownFriendGidsFromRecentVisitors(force = false) {
 
     try {
         const records = await getInteractRecords();
+        const state = getUserState();
         const invalidGidSet = getInvalidKnownFriendGidSet(now);
         const visitorGids = normalizeFriendGids(
-            (Array.isArray(records) ? records : []).map(record => record && record.visitorGid),
+            (Array.isArray(records) ? records : [])
+                .filter(record => shouldSyncKnownQqVisitorRecord(record, toNum(state && state.gid)))
+                .map(record => record && record.visitorGid),
         ).filter(gid => !invalidGidSet.has(gid));
         lastVisitorGidSyncAt = now;
 
@@ -418,6 +486,7 @@ function removeKnownFriendGid(friendGid, friendName, reason = '') {
 
     const current = normalizeFriendGids(getKnownFriendGids());
     const next = current.filter(item => item !== gid);
+    knownQqFriendFetchMissCount.delete(gid);
     markKnownFriendGidInvalid(gid);
     if (next.length !== current.length) {
         applyConfigSnapshot({ knownFriendGids: next }, { persist: false });
@@ -478,7 +547,10 @@ async function fetchQqFriendsByKnownGids() {
         try {
             const { body: replyBody } = await sendMsgAsync('gamepb.friendpb.FriendService', 'GetGameFriends', body);
             const reply = types.GetAllFriendsReply.decode(replyBody);
-            allFriends.push(...extractReplyFriends(reply));
+            const batchFriends = extractReplyFriends(reply)
+                .filter(friend => !isIgnoredQqFriendName(friend && friend.name) && !isIgnoredQqFriendName(friend && friend.remark));
+            handleKnownQqFriendFetchMisses(batch, batchFriends);
+            allFriends.push(...batchFriends);
         } catch (e) {
             logWarn('好友', `QQ 新好友接口分批请求失败(${i + 1}-${i + batch.length}/${knownGids.length}): ${e.message}`, {
                 module: 'friend',
@@ -933,7 +1005,7 @@ async function getFriendsList() {
         const friends = extractReplyFriends(reply);
         const state = getUserState();
         return friends
-            .filter(f => toNum(f.gid) !== state.gid && f.name !== '小小农夫' && f.remark !== '小小农夫')
+            .filter(f => toNum(f.gid) !== state.gid && !isIgnoredQqFriendName(f.name) && !isIgnoredQqFriendName(f.remark))
             .map(f => ({
                 gid: toNum(f.gid),
                 name: f.remark || f.name || `GID:${toNum(f.gid)}`,
@@ -1399,7 +1471,7 @@ async function checkFriends() {
             if (gid === state.gid) continue;
             if (visitedGids.has(gid)) continue;
             if (blacklist.has(gid)) continue;
-            if (String(f.name || '').trim() === '小小农夫' || String(f.remark || '').trim() === '小小农夫') continue;
+            if (isIgnoredQqFriendName(f.name) || isIgnoredQqFriendName(f.remark)) continue;
             
             const name = f.remark || f.name || `GID:${gid}`;
             const p = f.plant;
