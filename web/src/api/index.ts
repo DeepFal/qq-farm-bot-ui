@@ -28,6 +28,11 @@ api.interceptors.response.use((response) => {
   return response
 }, (error) => {
   const toast = useToastStore()
+  const responseError = String(error.response?.data?.error || error.response?.data?.message || '').trim()
+  const responseHint = String(error.response?.data?.hint || '').trim()
+  const fullMessage = responseError
+    ? `${responseError}${responseHint ? `。${responseHint}` : ''}`
+    : ''
 
   if (error.response) {
     if (error.response.status === 401) {
@@ -39,18 +44,18 @@ api.interceptors.response.use((response) => {
       }
     }
     else if (error.response.status >= 500) {
-      const backendError = String(error.response.data?.error || error.response.data?.message || '')
+      const backendError = fullMessage
       // 后端运行态可预期错误：不弹全局500，交给页面状态处理
       if (backendError === '账号未运行' || backendError === 'API Timeout') {
         return Promise.reject(error)
       }
-      toast.error(`服务器错误: ${error.response.status} ${error.response.statusText}`)
+      toast.error(backendError || `服务器错误: ${error.response.status} ${error.response.statusText}`)
     }
     else {
-      const msg = error.response.data?.message || error.message
+      const msg = fullMessage || error.message
       // Don't show toast for 404 if it's expected in some logic?
       // Generally for API calls, 404 is an error.
-      toast.error(`请求失败: ${msg}`)
+      toast.error(msg)
     }
   }
   else if (error.request) {

@@ -63,6 +63,10 @@ function normalizeSyncAllImportResult(input: unknown) {
   }
 }
 
+function normalizeText(input: unknown) {
+  return String(input ?? '').trim()
+}
+
 export const useFriendStore = defineStore('friend', () => {
   const friends = ref<any[]>([])
   const loading = ref(false)
@@ -80,6 +84,7 @@ export const useFriendStore = defineStore('friend', () => {
   const syncAllImportStatus = ref<SyncAllImportStatus>(normalizeSyncAllImportStatus(null))
   const syncAllImportLoading = ref(false)
   const syncAllImportSaving = ref(false)
+  const syncAllImportWarning = ref('')
   const syncAllImportResult = ref<{
     fetchedFriendCount: number
     npcFriendCount: number
@@ -109,6 +114,7 @@ export const useFriendStore = defineStore('friend', () => {
 
   function clearSyncAllImportStatus() {
     syncAllImportStatus.value = normalizeSyncAllImportStatus(null)
+    syncAllImportWarning.value = ''
     syncAllImportResult.value = null
   }
 
@@ -267,12 +273,15 @@ export const useFriendStore = defineStore('friend', () => {
     if (!accountId)
       return
     syncAllImportSaving.value = true
+    syncAllImportResult.value = null
+    syncAllImportWarning.value = ''
     try {
       const res = await api.post('/api/friend-syncall-import', { hex }, {
         headers: { 'x-account-id': accountId },
       })
       if (res.data.ok) {
         applySyncAllImportStatus(res.data.data)
+        syncAllImportWarning.value = normalizeText(res.data.syncWarning)
         syncAllImportResult.value = res.data.resultSummary
           ? normalizeSyncAllImportResult(res.data.resultSummary)
           : null
@@ -389,6 +398,7 @@ export const useFriendStore = defineStore('friend', () => {
     syncAllImportStatus,
     syncAllImportLoading,
     syncAllImportSaving,
+    syncAllImportWarning,
     syncAllImportResult,
     fetchFriends,
     fetchBlacklist,

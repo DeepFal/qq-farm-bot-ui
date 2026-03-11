@@ -287,33 +287,100 @@ function startAdminServer(dataProvider) {
         };
     }
 
+    function createSyncAllImportUserError(message, hint = '') {
+        const err = new Error(String(message || '导入失败'));
+        err.name = 'SyncAllImportUserError';
+        err.syncAllImportUserError = true;
+        err.hint = String(hint || '');
+        return err;
+    }
+
+    function isSyncAllImportUserError(err) {
+        return !!(err && typeof err === 'object' && err.syncAllImportUserError);
+    }
+
+    function buildSyncAllImportResponseError(err) {
+        return {
+            ok: false,
+            error: String((err && err.message) || '导入失败'),
+            hint: String((err && err.hint) || ''),
+        };
+    }
+
+    function normalizeSyncAllSyncWarning(error) {
+        const message = String((error && error.message) || error || '').trim();
+        if (!message) {
+            return '已保存导入的数据，但这次没有立即完成好友同步。你可以稍后重试，或等待账号在线后自动同步。';
+        }
+        if (message.includes('连接未打开')) {
+            return '已保存导入的数据，但账号当前未在线，暂时无法立即同步好友。账号在线后会自动继续尝试。';
+        }
+        if (message.includes('请求超时')) {
+            return '已保存导入的数据，但这次同步超时了。你可以稍后重试，或等待系统自动同步。';
+        }
+        return `已保存导入的数据，但本次立即同步没有完成。原因：${message}`;
+    }
+
     async function parseSyncAllRequestHex(hexText) {
         await loadProto();
         const sanitized = String(hexText || '').replace(/[^0-9a-f]/gi, '');
         if (!sanitized) {
-            throw new Error('请求包为空');
+            throw createSyncAllImportUserError(
+                '没有检测到可导入的数据',
+                '请粘贴完整的好友同步数据，支持包含空格和换行',
+            );
         }
         if (sanitized.length % 2 !== 0) {
-            throw new Error('十六进制长度无效');
+            throw createSyncAllImportUserError(
+                '导入数据不完整',
+                '请确认复制的是一整段同步数据，没有漏掉开头或结尾',
+            );
         }
 
         const wire = Buffer.from(sanitized, 'hex');
-        const gate = types.GateMessage.decode(wire);
+        let gate = null;
+        try {
+            gate = types.GateMessage.decode(wire);
+        } catch {
+            throw createSyncAllImportUserError(
+                '导入数据格式不正确',
+                '请确认粘贴的是 QQ 农场好友同步数据，而不是其他接口或普通日志文本',
+            );
+        }
         const meta = gate && gate.meta ? gate.meta : null;
         const serviceName = String(meta && meta.service_name || '');
         const methodName = String(meta && meta.method_name || '');
         const messageType = Number(meta && meta.message_type || 0);
         if (serviceName !== 'gamepb.friendpb.FriendService' || methodName !== 'SyncAll' || messageType !== 1) {
-            throw new Error('只支持导入 FriendService.SyncAll 请求包');
+            throw createSyncAllImportUserError(
+                '这份数据不是好友同步数据',
+                '请重新抓取 QQ 农场好友同步请求后再导入',
+            );
         }
 
-        const decrypted = await cryptoWasm.decryptBuffer(gate.body);
+        let decrypted = null;
+        try {
+            decrypted = await cryptoWasm.decryptBuffer(gate.body);
+        } catch {
+            throw createSyncAllImportUserError(
+                '导入数据无法识别',
+                '请确认数据完整，且来自当前版本的 QQ 农场好友同步请求',
+            );
+        }
         const requestType = types.SyncAllRequest || types.SyncAllFriendsRequest;
         if (!requestType) {
             throw new Error('SyncAllRequest 类型未加载');
         }
 
-        const request = requestType.decode(decrypted);
+        let request = null;
+        try {
+            request = requestType.decode(decrypted);
+        } catch {
+            throw createSyncAllImportUserError(
+                '导入数据内容损坏或不完整',
+                '请重新复制一次完整的好友同步数据后再试',
+            );
+        }
         const requestObject = requestType.toObject(request, {
             longs: String,
             bytes: String,
@@ -322,7 +389,10 @@ function startAdminServer(dataProvider) {
         });
         const openIds = normalizeSyncAllOpenIds(requestObject.open_ids);
         if (openIds.length === 0) {
-            throw new Error('请求包中没有可用的 OpenID');
+            throw createSyncAllImportUserError(
+                '这份数据里没有解析到可用的好友标识',
+                '请确认抓到的是好友同步数据，而不是空请求或其他接口数据',
+            );
         }
 
         return {
@@ -586,6 +656,7 @@ function startAdminServer(dataProvider) {
 
             let syncResult = null;
             let resultSummary = null;
+            let syncWarning = '';
             if (provider && typeof provider.syncImportedQqFriends === 'function') {
                 try {
                     syncResult = await provider.syncImportedQqFriends(id);
@@ -616,6 +687,7 @@ function startAdminServer(dataProvider) {
                         used: false,
                         error: e && e.message ? e.message : String(e || '同步失败'),
                     };
+                    syncWarning = normalizeSyncAllSyncWarning(syncResult.error);
                 }
             }
 
@@ -628,9 +700,13 @@ function startAdminServer(dataProvider) {
                     bodyBytes: parsed.bodyBytes,
                 },
                 syncResult,
+                syncWarning,
                 resultSummary,
             });
         } catch (e) {
+            if (isSyncAllImportUserError(e)) {
+                return res.status(400).json(buildSyncAllImportResponseError(e));
+            }
             return handleApiError(res, e);
         }
     });

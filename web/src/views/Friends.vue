@@ -35,6 +35,7 @@ const {
   syncAllImportStatus,
   syncAllImportLoading,
   syncAllImportSaving,
+  syncAllImportWarning,
   syncAllImportResult,
 } = storeToRefs(friendStore)
 const { status, loading: statusLoading, realtimeConnected } = storeToRefs(statusStore)
@@ -365,10 +366,15 @@ async function handleImportSyncAllHex() {
 
   const openIdCount = Number(result?.parsed?.openIdCount || result?.data?.openIdCount || 0)
   const friendCount = Number(result?.resultSummary?.currentFriendCount || 0)
+  const syncWarning = String(result?.syncWarning || '').trim()
+  if (syncWarning) {
+    toastStore.warning(syncWarning)
+    return
+  }
   if (friendCount > 0)
-    toastStore.success(`已导入 ${openIdCount} 个 OpenID，当前好友 ${friendCount} 人`)
+    toastStore.success(`已导入 ${openIdCount} 个好友标识，当前好友 ${friendCount} 人`)
   else
-    toastStore.success(`已导入 ${openIdCount} 个 OpenID`)
+    toastStore.success(`已导入 ${openIdCount} 个好友标识`)
 }
 
 function handleRemoveKnownFriendGid(friend: any, e: Event) {
@@ -634,11 +640,11 @@ function formatSyncAllImportTime(timestamp: number) {
                 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
                 : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'"
             >
-              {{ hasImportedSyncAllOpenIds ? `OpenID ${syncAllImportStatus.openIdCount}` : '未导入 SyncAll' }}
+              {{ hasImportedSyncAllOpenIds ? `已导入 ${syncAllImportStatus.openIdCount}` : '未导入同步数据' }}
             </span>
           </div>
           <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            QQ 新好友接口依赖已知 GID 和可选的 SyncAll 导入数据。默认收起，展开后再维护。
+            QQ 新好友接口依赖已知 GID 和手动导入的好友同步数据。默认收起，展开后再维护。
           </p>
         </div>
         <div class="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400" @click.stop>
@@ -732,7 +738,7 @@ function formatSyncAllImportTime(timestamp: number) {
               <div class="flex items-center gap-2">
                 <div class="i-carbon-document-import text-lg text-amber-500" />
                 <h4 class="text-base text-gray-700 font-semibold dark:text-gray-200">
-                  导入 SyncAll 请求包
+                  手动导入好友同步数据
                 </h4>
                 <span
                   class="rounded-full px-2 py-0.5 text-xs"
@@ -744,7 +750,7 @@ function formatSyncAllImportTime(timestamp: number) {
                 </span>
               </div>
               <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                粘贴手机抓到的 `FriendService.SyncAll` 请求包十六进制。系统会按当前账号解析 OpenID 列表，并优先用它同步全量好友。
+                这是一个高级功能。请粘贴抓包工具里获取到的 QQ 农场好友同步数据，系统会自动解析并尝试补全好友列表。
               </p>
             </div>
             <div class="flex items-center gap-2">
@@ -770,7 +776,7 @@ function formatSyncAllImportTime(timestamp: number) {
           <div class="grid mt-4 gap-3 lg:grid-cols-4 sm:grid-cols-2">
             <div class="rounded-lg bg-gray-50 px-3 py-3 dark:bg-gray-900/40">
               <div class="text-xs text-gray-400">
-                已导入 OpenID
+                已导入好友标识
               </div>
               <div class="mt-1 text-lg text-gray-800 font-semibold dark:text-gray-100">
                 {{ syncAllImportStatus.openIdCount || 0 }}
@@ -812,18 +818,25 @@ function formatSyncAllImportTime(timestamp: number) {
             当前好友数量 {{ syncAllImportResult.currentFriendCount }}。
           </div>
 
+          <div
+            v-if="syncAllImportWarning"
+            class="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          >
+            {{ syncAllImportWarning }}
+          </div>
+
           <div class="mt-4">
             <BaseTextarea
               v-model="syncAllHexInput"
               :rows="4"
-              label="SyncAll 请求包十六进制"
-              placeholder="粘贴类似 send_hex.txt 的十六进制文本，允许包含空格和换行"
+              label="好友同步数据"
+              placeholder="请粘贴抓包工具中导出的好友同步数据，支持空格和换行"
               :disabled="syncAllImportSaving"
             />
           </div>
 
           <div class="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500 dark:bg-gray-900/40 dark:text-gray-400">
-            导入只和当前账号绑定。若小程序好友发生变化，需要重新导入新的请求包以刷新 OpenID 列表。
+            导入只和当前账号绑定。导错数据不会覆盖你之前已经保存的导入结果；如果好友关系有变化，需要重新导入最新的同步数据。
           </div>
         </div>
       </div>
