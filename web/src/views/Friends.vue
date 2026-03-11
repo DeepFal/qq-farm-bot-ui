@@ -323,7 +323,7 @@ function compareFriends(a: any, b: any, mode: string) {
     return compareFriendBase(a, b)
 
   if (mode === 'gold') {
-    const goldDiff = getFriendGold(a) - getFriendGold(b)
+    const goldDiff = getFriendGold(b) - getFriendGold(a)
     if (goldDiff !== 0)
       return goldDiff
     return compareFriendBase(a, b)
