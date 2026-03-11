@@ -48,6 +48,7 @@ function createRuntimeState(options) {
                 ? store.getKnownFriendGidSyncCooldownSec(accountId)
                 : 600,
             friendBlacklist: store.getFriendBlacklist(accountId),
+            runtimeClient: store.getRuntimeClientConfig ? store.getRuntimeClientConfig() : null,
             __revision: configRevision,
         };
     }
