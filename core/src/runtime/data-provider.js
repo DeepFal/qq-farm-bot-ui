@@ -133,6 +133,8 @@ function createDataProvider(options) {
                 bagSeedFallbackStrategy: body.bagSeedFallbackStrategy,
                 intervals: body.intervals,
                 friendQuietHours: body.friendQuietHours,
+                knownFriendGids: body.knownFriendGids,
+                knownFriendGidSyncCooldownSec: body.knownFriendGidSyncCooldownSec,
             };
             store.applyConfigSnapshot(snapshot, { accountId });
             const rev = nextConfigRevision();
@@ -144,6 +146,10 @@ function createDataProvider(options) {
                 bagSeedFallbackStrategy: store.getBagSeedFallbackStrategy(accountId),
                 intervals: store.getIntervals(accountId),
                 friendQuietHours: store.getFriendQuietHours(accountId),
+                knownFriendGids: store.getKnownFriendGids ? store.getKnownFriendGids(accountId) : [],
+                knownFriendGidSyncCooldownSec: store.getKnownFriendGidSyncCooldownSec
+                    ? store.getKnownFriendGidSyncCooldownSec(accountId)
+                    : 600,
                 configRevision: rev,
             };
         },

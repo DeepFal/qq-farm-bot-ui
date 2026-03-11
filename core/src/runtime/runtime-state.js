@@ -43,6 +43,10 @@ function createRuntimeState(options) {
             bagSeedFallbackStrategy: store.getBagSeedFallbackStrategy(accountId),
             intervals: store.getIntervals(accountId),
             friendQuietHours: store.getFriendQuietHours(accountId),
+            knownFriendGids: store.getKnownFriendGids ? store.getKnownFriendGids(accountId) : [],
+            knownFriendGidSyncCooldownSec: store.getKnownFriendGidSyncCooldownSec
+                ? store.getKnownFriendGidSyncCooldownSec(accountId)
+                : 600,
             friendBlacklist: store.getFriendBlacklist(accountId),
             __revision: configRevision,
         };

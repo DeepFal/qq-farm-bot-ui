@@ -141,6 +141,8 @@ const ACCOUNT_CONFIG_SCHEMA = {
             default: 'level',
         },
         friendQuietHours: QUIET_HOURS_SCHEMA,
+        knownFriendGids: { type: 'array', items: { type: 'number', min: 1 }, default: [] },
+        knownFriendGidSyncCooldownSec: { type: 'number', min: 30, max: INTERVAL_MAX_SEC, default: 600 },
         friendBlacklist: { type: 'array', items: { type: 'number' }, default: [] },
     },
     additionalProperties: false,
