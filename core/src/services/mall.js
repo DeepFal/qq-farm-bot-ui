@@ -8,11 +8,12 @@ const { sendMsgAsync, getUserState } = require('../utils/network');
 const { types } = require('../utils/proto');
 const { toNum, log, sleep } = require('../utils/utils');
 const { getDateKey, createDailyCooldown } = require('./common');
+const { getCurrentContainerHours } = require('./warehouse');
 
-const ORGANIC_FERTILIZER_MALL_GOODS_ID = 1002;
+const ORGANIC_10H_GOODS_ID = 1002;
+const NORMAL_10H_GOODS_ID = 1003;
 const BUY_COOLDOWN_MS = 10 * 60 * 1000;
 const MAX_ROUNDS = 100;
-const BUY_PER_ROUND = 10;
 const FREE_GIFTS_DAILY_KEY = 'mall_free_gifts';
 
 let lastBuyAt = 0;
@@ -81,14 +82,9 @@ function parseMallPriceValue(priceField) {
     return Math.max(0, Math.floor(parsed || 0));
 }
 
-function findOrganicFertilizerMallGoods(goodsList) {
-    const list = Array.isArray(goodsList) ? goodsList : [];
-    return list.find((g) => toNum(g && g.goods_id) === ORGANIC_FERTILIZER_MALL_GOODS_ID) || null;
-}
-
-async function autoBuyOrganicFertilizerViaMall() {
+async function buyFertilizerViaMall(targetGoodsId, maxTotal = 10) {
     const goodsList = await getMallGoodsList(1);
-    const goods = findOrganicFertilizerMallGoods(goodsList);
+    const goods = goodsList.find((g) => toNum(g && g.goods_id) === targetGoodsId) || null;
     if (!goods) return 0;
 
     const goodsId = toNum(goods.goods_id);
@@ -96,28 +92,32 @@ async function autoBuyOrganicFertilizerViaMall() {
     const singlePrice = parseMallPriceValue(goods.price);
     let ticket = Math.max(0, toNum((getUserState() || {}).ticket));
     let totalBought = 0;
-    let perRound = BUY_PER_ROUND;
+    let perRound = Math.min(maxTotal, 10);
     if (singlePrice > 0 && ticket > 0) {
-        perRound = Math.max(1, Math.min(BUY_PER_ROUND, Math.floor(ticket / singlePrice) || 1));
+        perRound = Math.max(1, Math.min(perRound, Math.floor(ticket / singlePrice) || 1));
     }
 
     for (let i = 0; i < MAX_ROUNDS; i++) {
+        const remaining = maxTotal - totalBought;
+        if (remaining <= 0) break;
+        const thisBuy = Math.min(perRound, remaining);
+
         if (singlePrice > 0 && ticket > 0 && ticket < singlePrice) {
             buyPausedNoGoldDateKey = getDateKey();
             break;
         }
         try {
-            await purchaseMallGoods(goodsId, perRound);
-            totalBought += perRound;
+            await purchaseMallGoods(goodsId, thisBuy);
+            totalBought += thisBuy;
             if (singlePrice > 0 && ticket > 0) {
-                ticket = Math.max(0, ticket - (singlePrice * perRound));
+                ticket = Math.max(0, ticket - (singlePrice * thisBuy));
                 if (ticket < singlePrice) break;
             }
             await sleep(120);
         } catch (e) {
             const msg = String((e && e.message) || '');
             if (msg.includes('余额不足') || msg.includes('点券不足') || msg.includes('code=1000019')) {
-                if (perRound > 1) {
+                if (thisBuy > 1) {
                     perRound = 1;
                     continue;
                 }
@@ -129,18 +129,68 @@ async function autoBuyOrganicFertilizerViaMall() {
     return totalBought;
 }
 
-async function autoBuyOrganicFertilizer(force = false) {
+async function autoBuyOrganicFertilizer(force = false, buyConfig = {}) {
+    const type = ['organic', 'normal', 'both'].includes(buyConfig.type) ? buyConfig.type : 'organic';
+    const max = Math.max(1, Math.min(10, Math.floor(Number(buyConfig.max) || 10)));
+    const mode = buyConfig.mode === 'unlimited' ? 'unlimited' : 'threshold';
+    const threshold = Math.max(0, Number(buyConfig.threshold ?? 100));
+    const effectiveType = (mode === 'unlimited' && type === 'both') ? 'organic' : type;
     const now = Date.now();
     if (!force && now - lastBuyAt < BUY_COOLDOWN_MS) return 0;
-    lastBuyAt = now;
 
     try {
-        // 使用 MallService 购买链路（点券）
-        const totalBought = await autoBuyOrganicFertilizerViaMall();
+        let buyOrganic = effectiveType === 'organic' || effectiveType === 'both';
+        let buyNormal = effectiveType === 'normal' || effectiveType === 'both';
+        let normalHours = 0;
+        let organicHours = 0;
+
+        if (mode === 'threshold') {
+            ({ normal: normalHours, organic: organicHours } = await getCurrentContainerHours());
+            if (threshold <= 0) {
+                if (buyOrganic && organicHours > 0) buyOrganic = false;
+                if (buyNormal && normalHours > 0) buyNormal = false;
+            } else {
+                if (buyOrganic && organicHours >= threshold) buyOrganic = false;
+                if (buyNormal && normalHours >= threshold) buyNormal = false;
+            }
+            if (!buyOrganic && !buyNormal) {
+                lastBuyAt = now;
+                return 0;
+            }
+        }
+
+        let totalBought = 0;
+        let remaining = max;
+        const plans = [];
+
+        if (buyOrganic) {
+            plans.push({
+                goodsId: ORGANIC_10H_GOODS_ID,
+                currentHours: organicHours,
+            });
+        }
+        if (buyNormal) {
+            plans.push({
+                goodsId: NORMAL_10H_GOODS_ID,
+                currentHours: normalHours,
+            });
+        }
+        if (plans.length > 1 && mode === 'threshold') {
+            plans.sort((a, b) => a.currentHours - b.currentHours);
+        }
+
+        lastBuyAt = now;
+        for (const plan of plans) {
+            if (remaining <= 0) break;
+            const bought = await buyFertilizerViaMall(plan.goodsId, remaining);
+            totalBought += bought;
+            remaining -= bought;
+        }
+
         if (totalBought > 0) {
             buyDoneDateKey = getDateKey();
             buyLastSuccessAt = Date.now();
-            log('商城', `自动购买有机化肥 x${totalBought}`, {
+            log('商城', `自动购买化肥 x${totalBought}`, {
                 module: 'warehouse',
                 event: 'fertilizer_buy',
                 result: 'ok',

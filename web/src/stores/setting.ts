@@ -2,6 +2,10 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import api from '@/api'
 
+type FertilizerMode = 'none' | 'normal' | 'organic' | 'both'
+type FertilizerBuyType = 'organic' | 'normal' | 'both'
+type FertilizerBuyMode = 'threshold' | 'unlimited'
+
 export interface AutomationConfig {
   farm?: boolean
   farm_manage?: boolean
@@ -11,15 +15,27 @@ export interface AutomationConfig {
   farm_push?: boolean
   land_upgrade?: boolean
   friend?: boolean
+  friend_help_exp_limit?: boolean
   task?: boolean
+  email?: boolean
+  fertilizer_gift?: boolean
+  fertilizer_buy?: boolean
+  fertilizer_buy_type?: FertilizerBuyType
+  fertilizer_buy_max?: number
+  fertilizer_buy_mode?: FertilizerBuyMode
+  fertilizer_buy_threshold?: number
   sell?: boolean
-  fertilizer?: string
+  fertilizer?: FertilizerMode
   fertilizer_multi_season?: boolean
   fertilizer_land_types?: string[]
   friend_steal?: boolean
   friend_steal_blacklist?: number[]
   friend_help?: boolean
   friend_bad?: boolean
+  free_gifts?: boolean
+  share_reward?: boolean
+  vip_gift?: boolean
+  month_card?: boolean
   open_server_gift?: boolean
 }
 

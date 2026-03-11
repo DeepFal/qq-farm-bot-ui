@@ -230,7 +230,12 @@ async function runFarmTick(auto) {
         if (auto.task) await checkAndClaimTasks();
         if (auto.email) await checkAndClaimEmails();
         if (auto.fertilizer_gift) await openFertilizerGiftPacksSilently();
-        if (auto.fertilizer_buy) await autoBuyOrganicFertilizer();
+        if (auto.fertilizer_buy) await autoBuyOrganicFertilizer(false, {
+            type: auto.fertilizer_buy_type,
+            max: auto.fertilizer_buy_max,
+            mode: auto.fertilizer_buy_mode,
+            threshold: auto.fertilizer_buy_threshold,
+        });
     } catch (e) {
         log('系统', `农场调度执行失败: ${e.message}`, { module: 'system', event: 'farm_tick', result: 'error' });
     } finally {

@@ -154,6 +154,11 @@ function getContainerHoursFromBagItems(items) {
     };
 }
 
+async function getCurrentContainerHours() {
+    const bagReply = await getBag();
+    return getContainerHoursFromBagItems(getBagItems(bagReply));
+}
+
 function getFertilizerItemTypeAndHours(itemId) {
     const id = Number(itemId) || 0;
     if (NORMAL_FERTILIZER_ITEM_HOURS.has(id)) {
@@ -569,5 +574,6 @@ module.exports = {
     }),
     sellAllFruits,
     getBagItems,
+    getCurrentContainerHours,
     getCurrentTotalsFromBag,
 };
