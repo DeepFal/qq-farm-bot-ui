@@ -747,7 +747,7 @@ async function pruneNpcQqFriendsDuringMaintenance(reason = 'maintenance') {
 }
 
 async function fetchQqFriendsByKnownGids() {
-    if (!types.GetGameFriendsRequest || !types.GetAllFriendsReply) {
+    if (!types.GetGameFriendsRequest || !types.GetGameFriendsReply) {
         throw new Error('GetGameFriends 接口类型未加载');
     }
 
@@ -764,7 +764,7 @@ async function fetchQqFriendsByKnownGids() {
         })).finish();
         try {
             const { body: replyBody } = await sendMsgAsync('gamepb.friendpb.FriendService', 'GetGameFriends', body);
-            const reply = types.GetAllFriendsReply.decode(replyBody);
+            const reply = types.GetGameFriendsReply.decode(replyBody);
             const rawBatchFriends = extractReplyFriends(reply);
             const { normalFriends: batchFriends, npcFriends } = splitNpcQqFriends(rawBatchFriends);
             syncAutoPrunedNpcConfig(npcFriends, 'get_game_friends');
