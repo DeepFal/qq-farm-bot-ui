@@ -4,26 +4,40 @@
 
 const { getAllPlants, getFruitPrice, getSeedPrice, getItemImageById } = require('../config/gameConfig');
 
-function parseGrowTime(growPhases) {
+function parseGrowPhaseDurations(growPhases) {
     if (!growPhases) return 0;
     const phases = growPhases.split(';').filter(p => p.length > 0);
-    let totalTime = 0;
+    const durations = [];
     for (const phase of phases) {
         const match = phase.match(/:(\d+)$/);
         if (match) {
-            totalTime += Number.parseInt(match[1]);
+            durations.push(Number.parseInt(match[1], 10) || 0);
         }
     }
-    return totalTime;
+    return durations;
 }
 
-function parseNormalFertilizerReduceSec(growPhases) {
-    if (!growPhases) return 0;
-    const phases = String(growPhases).split(';').filter(p => p.length > 0);
-    if (!phases.length) return 0;
-    const first = phases[0];
-    const match = first.match(/:(\d+)$/);
-    return match ? (Number.parseInt(match[1], 10) || 0) : 0;
+function parseGrowTime(growPhases, seasons = 1) {
+    const durations = parseGrowPhaseDurations(growPhases);
+    if (!Array.isArray(durations) || durations.length === 0) return 0;
+
+    const totalTime = durations.reduce((sum, duration) => sum + duration, 0);
+    if (Number(seasons) !== 2) return totalTime;
+
+    const nonZeroDurations = durations.filter(duration => duration > 0);
+    const lastTwoDurations = nonZeroDurations.slice(-2);
+    const extraTime = lastTwoDurations.reduce((sum, duration) => sum + duration, 0);
+    return totalTime + extraTime;
+}
+
+function parseNormalFertilizerReduceSec(growPhases, seasons = 1) {
+    const durations = parseGrowPhaseDurations(growPhases)
+        .filter(duration => duration > 0);
+    if (durations.length === 0) return 0;
+
+    const maxDuration = Math.max(...durations);
+    const applyCount = Number(seasons) === 2 ? 2 : 1;
+    return maxDuration * applyCount;
 }
 
 function formatTime(seconds) {
@@ -51,18 +65,17 @@ function getPlantRankings(sortBy = 'exp') {
 
     const results = [];
     for (const plant of normalPlants) {
-        const baseGrowTime = parseGrowTime(plant.grow_phases);
-        if (baseGrowTime <= 0) continue;
         const seasons = Number(plant.seasons) || 1;
+        const baseGrowTime = parseGrowTime(plant.grow_phases, seasons);
+        if (baseGrowTime <= 0) continue;
         const isTwoSeason = seasons === 2;
-        const growTime = isTwoSeason ? (baseGrowTime * 1.5) : baseGrowTime;
+        const growTime = baseGrowTime;
         
         const harvestExpBase = Number.parseInt(plant.exp) || 0;
         const harvestExp = isTwoSeason ? (harvestExpBase * 2) : harvestExpBase;
         const expPerHour = (harvestExp / growTime) * 3600;
-        // 普通化肥：直接减少第一生长阶段时长（reduceSec）
-        const reduceSecBase = parseNormalFertilizerReduceSec(plant.grow_phases);
-        const reduceSecApplied = isTwoSeason ? (reduceSecBase * 2) : reduceSecBase;
+        // 普通化肥：减少最长非 0 生长阶段；两季作物按两次最长阶段计算
+        const reduceSecApplied = parseNormalFertilizerReduceSec(plant.grow_phases, seasons);
         const fertilizedGrowTime = growTime - reduceSecApplied;
         const safeFertilizedTime = fertilizedGrowTime > 0 ? fertilizedGrowTime : 1;
         const normalFertilizerExpPerHour = (harvestExp / safeFertilizedTime) * 3600;
@@ -89,7 +102,7 @@ function getPlantRankings(sortBy = 'exp') {
             level: requiredLevel,
             growTime,
             growTimeStr: formatTime(growTime),
-            reduceSec: reduceSecBase,
+            reduceSec: Number(seasons) === 2 ? (reduceSecApplied / 2) : reduceSecApplied,
             reduceSecApplied,
             expPerHour: Number.parseFloat(expPerHour.toFixed(2)),
             normalFertilizerExpPerHour: Number.parseFloat(normalFertilizerExpPerHour.toFixed(2)),

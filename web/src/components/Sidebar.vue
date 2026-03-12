@@ -158,6 +158,30 @@ const displayName = computed(() => {
   return acc.uin
 })
 
+function getAccountAvatar(account: any) {
+  const avatar = String(account?.avatar || account?.avatarUrl || '').trim()
+  if (avatar)
+    return avatar
+
+  const uin = String(account?.uin || account?.qq || '').trim()
+  if (uin)
+    return `https://q1.qlogo.cn/g?b=qq&nk=${uin}&s=100`
+
+  return ''
+}
+
+function getAccountMeta(account: any) {
+  const uin = String(account?.uin || account?.qq || '').trim()
+  if (uin)
+    return uin
+
+  const gid = String(account?.gid || '').trim()
+  if (gid)
+    return `GID:${gid}`
+
+  return String(account?.id || '未选择')
+}
+
 const connectionStatus = computed(() => {
   if (!systemConnected.value) {
     return {
@@ -246,8 +270,8 @@ watch(
           <div class="flex items-center gap-3 overflow-hidden">
             <div class="h-8 w-8 flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-200 ring-2 ring-white dark:bg-gray-600 dark:ring-gray-700">
               <img
-                v-if="currentAccount?.uin"
-                :src="`https://q1.qlogo.cn/g?b=qq&nk=${currentAccount.uin}&s=100`"
+                v-if="getAccountAvatar(currentAccount)"
+                :src="getAccountAvatar(currentAccount)"
                 class="h-full w-full object-cover"
                 @error="(e) => (e.target as HTMLImageElement).style.display = 'none'"
               >
@@ -266,7 +290,7 @@ watch(
                   {{ platform }}
                 </span>
                 <span class="truncate text-xs text-gray-400">
-                  {{ currentAccount?.uin || currentAccount?.id || '未选择' }}
+                  {{ getAccountMeta(currentAccount) }}
                 </span>
               </div>
             </div>
@@ -293,8 +317,8 @@ watch(
               >
                 <div class="h-6 w-6 flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-200 dark:bg-gray-600">
                   <img
-                    v-if="acc.uin"
-                    :src="`https://q1.qlogo.cn/g?b=qq&nk=${acc.uin}&s=100`"
+                    v-if="getAccountAvatar(acc)"
+                    :src="getAccountAvatar(acc)"
                     class="h-full w-full object-cover"
                     @error="(e) => (e.target as HTMLImageElement).style.display = 'none'"
                   >
@@ -312,7 +336,7 @@ watch(
                     >
                       {{ getPlatformLabel(acc.platform) }}
                     </span>
-                    <span class="text-xs text-gray-400">{{ acc.uin || acc.id }}</span>
+                    <span class="text-xs text-gray-400">{{ getAccountMeta(acc) }}</span>
                   </div>
                 </div>
                 <div class="flex items-center gap-1">

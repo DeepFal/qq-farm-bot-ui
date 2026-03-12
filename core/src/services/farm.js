@@ -21,6 +21,7 @@ let isFirstFarmCheck = true;
 let farmLoopRunning = false;
 let externalSchedulerMode = false;
 const farmScheduler = createScheduler('farm');
+const pendingNormalFertilizerPlans = new Map();
 
 // ============ 农场 API ============
 
@@ -122,6 +123,179 @@ async function fertilize(landIds, fertilizerId = NORMAL_FERTILIZER_ID) {
         if (landIds.length > 1) await sleep(50);  // 50ms 间隔
     }
     return successCount;
+}
+
+function getPlantPhaseWindows(plant) {
+    const phases = Array.isArray(plant && plant.phases) ? plant.phases : [];
+    const windows = [];
+    for (let i = 0; i < phases.length; i++) {
+        const current = phases[i];
+        if (!current) continue;
+        const phase = toNum(current.phase);
+        if (phase === PlantPhase.UNKNOWN || phase === PlantPhase.MATURE || phase === PlantPhase.DEAD) continue;
+        const beginTime = toTimeSec(current.begin_time);
+        if (beginTime <= 0) continue;
+
+        let endTime = 0;
+        for (let j = i + 1; j < phases.length; j++) {
+            const nextBegin = toTimeSec(phases[j] && phases[j].begin_time);
+            if (nextBegin > beginTime) {
+                endTime = nextBegin;
+                break;
+            }
+        }
+        const duration = endTime > beginTime ? (endTime - beginTime) : 0;
+        if (duration <= 0) continue;
+        windows.push({
+            phase,
+            beginTime,
+            endTime,
+            duration,
+        });
+    }
+    return windows;
+}
+
+function getLongestNormalFertilizerWindow(plant) {
+    const windows = getPlantPhaseWindows(plant);
+    if (windows.length === 0) return null;
+
+    let best = null;
+    for (const window of windows) {
+        if (!best || window.duration > best.duration || (window.duration === best.duration && window.beginTime < best.beginTime)) {
+            best = window;
+        }
+    }
+    return best;
+}
+
+function hasNormalFertilizerApplied(plant) {
+    const phases = Array.isArray(plant && plant.phases) ? plant.phases : [];
+    for (const phaseInfo of phases) {
+        const fertsUsed = phaseInfo && phaseInfo.ferts_used;
+        if (!fertsUsed || typeof fertsUsed !== 'object') continue;
+        const keys = Object.keys(fertsUsed);
+        for (const key of keys) {
+            if (toNum(key) === NORMAL_FERTILIZER_ID && toNum(fertsUsed[key]) > 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function clearPendingNormalFertilizerPlan(landId) {
+    const id = toNum(landId);
+    if (!id) return false;
+    pendingNormalFertilizerPlans.delete(id);
+    return farmScheduler.clear(`normal_fertilize_${id}`);
+}
+
+async function applyScheduledNormalFertilizer(landId, plan = null) {
+    const id = toNum(landId);
+    if (!id) return 0;
+
+    const activePlan = plan || pendingNormalFertilizerPlans.get(id) || null;
+    if (!activePlan) return 0;
+
+    try {
+        const latest = await getAllLands();
+        const lands = Array.isArray(latest && latest.lands) ? latest.lands : [];
+        const land = lands.find(item => toNum(item && item.id) === id);
+        if (!land || !land.unlocked || !land.plant || !Array.isArray(land.plant.phases) || land.plant.phases.length === 0) {
+            pendingNormalFertilizerPlans.delete(id);
+            return 0;
+        }
+
+        const plant = land.plant;
+        const plantId = toNum(plant.id);
+        if (activePlan.plantId > 0 && plantId > 0 && activePlan.plantId !== plantId) {
+            pendingNormalFertilizerPlans.delete(id);
+            return 0;
+        }
+        if (hasNormalFertilizerApplied(plant)) {
+            pendingNormalFertilizerPlans.delete(id);
+            return 0;
+        }
+
+        const currentPhase = getCurrentPhase(plant.phases, false, '');
+        const currentPhaseVal = toNum(currentPhase && currentPhase.phase);
+        if (currentPhaseVal === PlantPhase.MATURE || currentPhaseVal === PlantPhase.DEAD || currentPhaseVal === PlantPhase.UNKNOWN) {
+            pendingNormalFertilizerPlans.delete(id);
+            return 0;
+        }
+
+        const targetWindow = getLongestNormalFertilizerWindow(plant);
+        if (!targetWindow) {
+            pendingNormalFertilizerPlans.delete(id);
+            return 0;
+        }
+
+        const nowSec = getServerTimeSec();
+        if (nowSec < targetWindow.beginTime) {
+            scheduleNormalFertilizerForLand(land, { reason: activePlan.reason || 'normal' });
+            return 0;
+        }
+        if (nowSec >= targetWindow.endTime) {
+            pendingNormalFertilizerPlans.delete(id);
+            return 0;
+        }
+
+        const applied = await fertilize([id], NORMAL_FERTILIZER_ID);
+        pendingNormalFertilizerPlans.delete(id);
+        if (applied > 0) {
+            const phaseName = PHASE_NAMES[targetWindow.phase] || `阶段${targetWindow.phase}`;
+            log('施肥', `${activePlan.reasonLabel || '常规施肥'}：已在 ${phaseName} 阶段为土地#${id} 施普通化肥`, {
+                module: 'farm',
+                event: activePlan.eventName || 'fertilize',
+                result: 'ok',
+                reason: activePlan.reason || 'normal',
+                type: 'normal',
+                landId: id,
+                phase: targetWindow.phase,
+            });
+            recordOperation('fertilize', applied);
+        }
+        return applied;
+    } catch (e) {
+        logWarn('施肥', `普通化肥延迟施肥失败: ${e.message}`, {
+            module: 'farm',
+            event: (activePlan && activePlan.eventName) || 'fertilize',
+            result: 'error',
+            landId: id,
+        });
+        return 0;
+    }
+}
+
+function scheduleNormalFertilizerForLand(land, options = {}) {
+    const landId = toNum(land && land.id);
+    if (!landId || !land || !land.plant) return false;
+
+    const targetWindow = getLongestNormalFertilizerWindow(land.plant);
+    if (!targetWindow) return false;
+    clearPendingNormalFertilizerPlan(landId);
+
+    const reason = String(options.reason || 'normal').trim().toLowerCase() === 'multi_season' ? 'multi_season' : 'normal';
+    const reasonLabel = reason === 'multi_season' ? '多季补肥' : '常规施肥';
+    const eventName = reason === 'multi_season' ? '多季补肥' : 'fertilize';
+    const plan = {
+        landId,
+        plantId: toNum(land.plant.id),
+        targetBeginTime: targetWindow.beginTime,
+        targetEndTime: targetWindow.endTime,
+        targetPhase: targetWindow.phase,
+        reason,
+        reasonLabel,
+        eventName,
+    };
+
+    pendingNormalFertilizerPlans.set(landId, plan);
+    const delayMs = Math.max(0, (targetWindow.beginTime - getServerTimeSec()) * 1000);
+    farmScheduler.setTimeoutTask(`normal_fertilize_${landId}`, delayMs, async () => {
+        await applyScheduledNormalFertilizer(landId, plan);
+    });
+    return true;
 }
 
 /**
@@ -370,19 +544,28 @@ async function runFertilizerByConfig(plantedLands = [], options = {}) {
     let fertilizedNormal = 0;
     let fertilizedOrganic = 0;
 
-    if ((fertilizerConfig === 'normal' || fertilizerConfig === 'both') && normalTargets.length > 0) {
-        fertilizedNormal = await fertilize(normalTargets, NORMAL_FERTILIZER_ID);
-        if (fertilizedNormal > 0) {
-            log('施肥', `${reasonLabel}：已为 ${fertilizedNormal}/${normalTargets.length} 块地施普通化肥（范围: ${selectedLandTypeNames.join('、')}）`, {
+    if (fertilizerConfig === 'normal' || fertilizerConfig === 'both') {
+        const normalLandMap = new Map(latestLands.map(land => [toNum(land && land.id), land]));
+        let scheduledNormal = 0;
+        for (const landId of normalTargets) {
+            const land = normalLandMap.get(toNum(landId));
+            if (!land || !land.plant || !Array.isArray(land.plant.phases) || land.plant.phases.length === 0) continue;
+            if (hasNormalFertilizerApplied(land.plant)) continue;
+            if (scheduleNormalFertilizerForLand(land, { reason })) {
+                scheduledNormal += 1;
+            }
+        }
+        fertilizedNormal = scheduledNormal;
+        if (scheduledNormal > 0) {
+            log('施肥', `${reasonLabel}：已为 ${scheduledNormal} 块地安排普通化肥（在最长阶段开始时施肥，范围: ${selectedLandTypeNames.join('、')}）`, {
                 module: 'farm',
                 event: eventName,
-                result: 'ok',
+                result: 'scheduled',
                 reason,
                 type: 'normal',
-                count: fertilizedNormal,
+                count: scheduledNormal,
                 landTypes: selectedLandTypes,
             });
-            recordOperation('fertilize', fertilizedNormal);
         }
     }
 

@@ -50,6 +50,7 @@ function createRuntimeState(options) {
             autoRemoveNpcFarmers: store.getAutoRemoveNpcFarmers ? store.getAutoRemoveNpcFarmers(accountId) : false,
             syncAllOpenIds: store.getSyncAllOpenIds ? store.getSyncAllOpenIds(accountId) : [],
             friendBlacklist: store.getFriendBlacklist(accountId),
+            friendCache: store.getFriendCache(accountId),
             runtimeClient: store.getRuntimeClientConfig ? store.getRuntimeClientConfig() : null,
             __revision: configRevision,
         };

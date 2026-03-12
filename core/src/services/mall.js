@@ -131,13 +131,12 @@ async function buyFertilizerViaMall(targetGoodsId, maxTotal = 10) {
 
 async function autoBuyOrganicFertilizer(force = false, buyConfig = {}) {
     const type = ['organic', 'normal', 'both'].includes(buyConfig.type) ? buyConfig.type : 'organic';
-    const max = Math.max(1, Math.min(10, Number(buyConfig.max) || 10));
+    const max = Math.max(1, Math.min(10, Math.floor(Number(buyConfig.max) || 10)));
     const mode = buyConfig.mode === 'unlimited' ? 'unlimited' : 'threshold';
     const threshold = Math.max(0, Number(buyConfig.threshold ?? 100));
 
     // unlimited + both 非法组合，回退为 organic
     const effectiveType = (mode === 'unlimited' && type === 'both') ? 'organic' : type;
-
     const now = Date.now();
     if (!force && now - lastBuyAt < BUY_COOLDOWN_MS) return 0;
 
@@ -149,8 +148,13 @@ async function autoBuyOrganicFertilizer(force = false, buyConfig = {}) {
 
         if (mode === 'threshold') {
             ({ normal: normalHours, organic: organicHours } = await getCurrentContainerHours());
-            if (buyOrganic && organicHours >= threshold) buyOrganic = false;
-            if (buyNormal && normalHours >= threshold) buyNormal = false;
+            if (threshold <= 0) {
+                if (buyOrganic && organicHours > 0) buyOrganic = false;
+                if (buyNormal && normalHours > 0) buyNormal = false;
+            } else {
+                if (buyOrganic && organicHours >= threshold) buyOrganic = false;
+                if (buyNormal && normalHours >= threshold) buyNormal = false;
+            }
             if (!buyOrganic && !buyNormal) {
                 lastBuyAt = now;
                 return 0;

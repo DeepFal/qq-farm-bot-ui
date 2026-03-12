@@ -197,14 +197,21 @@ function getPlantGrowTime(plantId) {
     
     // 解析 "种子:30;发芽:30;成熟:0;" 格式
     const phases = plant.grow_phases.split(';').filter(p => p);
-    let totalSeconds = 0;
+    const durations = [];
     for (const phase of phases) {
         const match = phase.match(/:(\d+)/);
         if (match) {
-            totalSeconds += Number.parseInt(match[1]);
+            durations.push(Number.parseInt(match[1], 10) || 0);
         }
     }
-    return totalSeconds;
+
+    const totalSeconds = durations.reduce((sum, duration) => sum + duration, 0);
+    if (Number(plant.seasons) !== 2) {
+        return totalSeconds;
+    }
+
+    const lastTwoDurations = durations.filter(duration => duration > 0).slice(-2);
+    return totalSeconds + lastTwoDurations.reduce((sum, duration) => sum + duration, 0);
 }
 
 /**
