@@ -110,7 +110,19 @@ export interface SettingsState {
   runtimeClient: RuntimeClientConfig
 }
 
-type AccountSettingsPayload = Pick<SettingsState, 'plantingStrategy' | 'preferredSeedId' | 'bagSeedPriority' | 'bagSeedFallbackStrategy' | 'intervals' | 'friendQuietHours' | 'automation'>
+export type AccountSettingsPayload = Pick<SettingsState, 'plantingStrategy' | 'preferredSeedId' | 'bagSeedPriority' | 'bagSeedFallbackStrategy' | 'intervals' | 'friendQuietHours' | 'automation'>
+
+export interface SyncSettingsResult {
+  sourceAccountId: string
+  targetMode: 'all' | 'selected'
+  targetCount: number
+  targetAccountIds: string[]
+  targetAccounts: Array<{
+    id: string
+    name: string
+    platform: string
+  }>
+}
 
 export const useSettingStore = defineStore('setting', () => {
   const settings = ref<SettingsState>({
@@ -208,7 +220,7 @@ export const useSettingStore = defineStore('setting', () => {
       return { ok: false, error: '未选择账号' }
     loading.value = true
     try {
-      // 1. Save general settings
+      // 统一保存账号级策略与自动控制，避免多次写入与重复广播
       const settingsPayload = {
         plantingStrategy: newSettings.plantingStrategy,
         preferredSeedId: newSettings.preferredSeedId,
@@ -216,22 +228,44 @@ export const useSettingStore = defineStore('setting', () => {
         bagSeedFallbackStrategy: newSettings.bagSeedFallbackStrategy,
         intervals: newSettings.intervals,
         friendQuietHours: newSettings.friendQuietHours,
+        automation: newSettings.automation,
       }
 
       await api.post('/api/settings/save', settingsPayload, {
         headers: { 'x-account-id': accountId },
       })
 
-      // 2. Save automation settings
-      if (newSettings.automation) {
-        await api.post('/api/automation', newSettings.automation, {
-          headers: { 'x-account-id': accountId },
-        })
-      }
-
       // Refresh settings
       await fetchSettings(accountId)
       return { ok: true }
+    }
+    finally {
+      loading.value = false
+    }
+  }
+
+  async function syncSettings(accountId: string, payload: {
+    targetMode: 'all' | 'selected'
+    targetAccountIds?: string[]
+    settings: AccountSettingsPayload
+  }) {
+    if (!accountId)
+      return { ok: false, error: '未选择账号' }
+
+    loading.value = true
+    try {
+      const { data } = await api.post('/api/settings/sync', {
+        targetMode: payload.targetMode,
+        targetAccountIds: payload.targetAccountIds || [],
+        payload: payload.settings,
+      }, {
+        headers: { 'x-account-id': accountId },
+      })
+
+      if (data && data.ok)
+        return { ok: true, data: (data.data || {}) as SyncSettingsResult }
+
+      return { ok: false, error: data?.error || '同步失败' }
     }
     finally {
       loading.value = false
@@ -294,5 +328,5 @@ export const useSettingStore = defineStore('setting', () => {
     }
   }
 
-  return { settings, loading, fetchSettings, saveSettings, saveOfflineConfig, saveQrLoginConfig, saveRuntimeClientConfig, changeAdminPassword }
+  return { settings, loading, fetchSettings, saveSettings, syncSettings, saveOfflineConfig, saveQrLoginConfig, saveRuntimeClientConfig, changeAdminPassword }
 })

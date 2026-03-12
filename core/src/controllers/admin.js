@@ -823,6 +823,64 @@ function startAdminServer(dataProvider) {
         }
     });
 
+    app.post('/api/settings/sync', async (req, res) => {
+        const sourceAccountId = getAccId(req);
+        if (!sourceAccountId) {
+            return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+        }
+
+        try {
+            const body = (req.body && typeof req.body === 'object') ? req.body : {};
+            const rawTargetMode = String(body.targetMode || 'selected').trim().toLowerCase();
+            const targetMode = rawTargetMode === 'all' || rawTargetMode === 'selected' ? rawTargetMode : '';
+            if (!targetMode) {
+                return res.status(400).json({ ok: false, error: '无效的同步目标模式' });
+            }
+            const payload = (body.payload && typeof body.payload === 'object') ? body.payload : {};
+            const allAccountsData = provider.getAccounts ? provider.getAccounts() : { accounts: [] };
+            const allAccounts = Array.isArray(allAccountsData.accounts) ? allAccountsData.accounts : [];
+            const availableTargets = allAccounts.filter(acc => String(acc.id || '') !== String(sourceAccountId));
+            const availableTargetIdSet = new Set(availableTargets.map(acc => String(acc.id || '')));
+
+            let targetAccountIds = [];
+            if (targetMode === 'all') {
+                targetAccountIds = availableTargets.map(acc => String(acc.id || ''));
+            } else {
+                const rawTargetIds = Array.isArray(body.targetAccountIds) ? body.targetAccountIds : [];
+                targetAccountIds = [...new Set(
+                    rawTargetIds
+                        .map(accountId => resolveAccId(String(accountId || '')))
+                        .filter(accountId => availableTargetIdSet.has(String(accountId || ''))),
+                )];
+            }
+
+            if (targetAccountIds.length === 0) {
+                return res.status(400).json({ ok: false, error: '请至少选择一个目标账号' });
+            }
+
+            const result = await provider.syncAccountSettings(targetAccountIds, payload);
+            const targetAccounts = availableTargets
+                .filter(acc => targetAccountIds.includes(String(acc.id || '')))
+                .map(acc => ({
+                    id: String(acc.id || ''),
+                    name: String(acc.name || acc.nick || acc.id || '').trim(),
+                    platform: String(acc.platform || '').trim().toLowerCase(),
+                }));
+
+            res.json({
+                ok: true,
+                data: {
+                    ...result,
+                    sourceAccountId: String(sourceAccountId || ''),
+                    targetMode,
+                    targetAccounts,
+                },
+            });
+        } catch (e) {
+            res.status(500).json({ ok: false, error: e.message });
+        }
+    });
+
     // API: 设置面板主题
     app.post('/api/settings/theme', async (req, res) => {
         try {

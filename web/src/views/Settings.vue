@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AutomationConfig } from '@/stores/setting'
+import type { AccountSettingsPayload, AutomationConfig } from '@/stores/setting'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, ref, watch, watchEffect } from 'vue'
 import api from '@/api'
@@ -9,7 +9,7 @@ import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import BaseSwitch from '@/components/ui/BaseSwitch.vue'
 import BaseTextarea from '@/components/ui/BaseTextarea.vue'
-import { useAccountStore } from '@/stores/account'
+import { getPlatformClass, getPlatformLabel, useAccountStore } from '@/stores/account'
 import { useFarmStore } from '@/stores/farm'
 import { useSettingStore } from '@/stores/setting'
 import { useToastStore } from '@/stores/toast'
@@ -29,6 +29,10 @@ const offlineSaving = ref(false)
 const offlineTesting = ref(false)
 const qrSaving = ref(false)
 const runtimeClientSaving = ref(false)
+const settingsSyncModalVisible = ref(false)
+const settingsSyncMode = ref<'all' | 'selected'>('all')
+const settingsSyncTargetIds = ref<string[]>([])
+const settingsSyncSaving = ref(false)
 
 const token = computed(() => {
   return localStorage.getItem('admin_token') || '未登录'
@@ -63,6 +67,23 @@ function showAlert(message: string, type: 'primary' | 'danger' = 'primary') {
 const currentAccountName = computed(() => {
   const acc = accounts.value.find((a: any) => a.id === currentAccountId.value)
   return acc ? (acc.name || acc.nick || acc.id) : null
+})
+const syncableAccounts = computed(() =>
+  accounts.value.filter((account: any) => String(account?.id || '') !== String(currentAccountId.value || '')),
+)
+const selectedSettingsSyncAccounts = computed(() => {
+  const selectedIdSet = new Set(settingsSyncTargetIds.value.map(id => String(id || '')))
+  return syncableAccounts.value.filter((account: any) => selectedIdSet.has(String(account?.id || '')))
+})
+const selectedSettingsSyncCount = computed(() => selectedSettingsSyncAccounts.value.length)
+const settingsSyncSummaryText = computed(() => {
+  if (settingsSyncMode.value === 'all')
+    return `将同步到除当前账号外的全部 ${syncableAccounts.value.length} 个账号`
+
+  if (selectedSettingsSyncCount.value === 0)
+    return '请选择至少一个目标账号'
+
+  return `已选择 ${selectedSettingsSyncCount.value} 个目标账号`
 })
 const BAG_PRIORITY_STRATEGY = 'bag_priority'
 const DEFAULT_BAG_SEED_FALLBACK_STRATEGY = 'level'
@@ -808,6 +829,9 @@ onMounted(() => {
 })
 
 watch(currentAccountId, () => {
+  settingsSyncModalVisible.value = false
+  settingsSyncMode.value = 'all'
+  settingsSyncTargetIds.value = []
   loadData()
 })
 
@@ -985,22 +1009,11 @@ async function saveAccountSettings() {
   if (!currentAccountId.value)
     return
 
-  localSettings.value.automation.fertilizer_land_types = normalizeFertilizerLandTypes(localSettings.value.automation.fertilizer_land_types)
-  localSettings.value.automation.friend_steal_blacklist = normalizeStealPlantBlacklist(localSettings.value.automation.friend_steal_blacklist)
-  if (isBagPriorityStrategy.value && bagSeedsLoadedAccountId.value === currentAccountId.value)
-    localSettings.value.bagSeedPriority = mergeBagSeedPriority(localSettings.value.bagSeedPriority, bagPrioritySeedSource.value)
-  else
-    localSettings.value.bagSeedPriority = normalizeBagSeedPriority(localSettings.value.bagSeedPriority)
-  if (
-    localSettings.value.bagSeedFallbackStrategy === BAG_PRIORITY_STRATEGY
-    || !bagSeedFallbackStrategyOptions.value.some(option => option.value === localSettings.value.bagSeedFallbackStrategy)
-  ) {
-    localSettings.value.bagSeedFallbackStrategy = DEFAULT_BAG_SEED_FALLBACK_STRATEGY
-  }
+  const settingsPayload = buildAccountSettingsPayload()
 
   saving.value = true
   try {
-    const res = await settingStore.saveSettings(currentAccountId.value, localSettings.value)
+    const res = await settingStore.saveSettings(currentAccountId.value, settingsPayload)
     if (res.ok) {
       showAlert('账号设置已保存')
     }
@@ -1010,6 +1023,113 @@ async function saveAccountSettings() {
   }
   finally {
     saving.value = false
+  }
+}
+
+function buildAccountSettingsPayload(): AccountSettingsPayload {
+  const next = JSON.parse(JSON.stringify(localSettings.value)) as AccountSettingsPayload
+  next.automation.fertilizer_land_types = normalizeFertilizerLandTypes(next.automation.fertilizer_land_types)
+  next.automation.friend_steal_blacklist = normalizeStealPlantBlacklist(next.automation.friend_steal_blacklist)
+  if (isBagPriorityStrategy.value && bagSeedsLoadedAccountId.value === currentAccountId.value)
+    next.bagSeedPriority = mergeBagSeedPriority(next.bagSeedPriority, bagPrioritySeedSource.value)
+  else
+    next.bagSeedPriority = normalizeBagSeedPriority(next.bagSeedPriority)
+  if (
+    next.bagSeedFallbackStrategy === BAG_PRIORITY_STRATEGY
+    || !bagSeedFallbackStrategyOptions.value.some(option => option.value === next.bagSeedFallbackStrategy)
+  ) {
+    next.bagSeedFallbackStrategy = DEFAULT_BAG_SEED_FALLBACK_STRATEGY
+  }
+
+  localSettings.value = JSON.parse(JSON.stringify(next))
+  return next
+}
+
+function openSettingsSyncModal() {
+  if (!currentAccountId.value) {
+    showAlert('请先选择账号', 'danger')
+    return
+  }
+
+  if (syncableAccounts.value.length === 0) {
+    showAlert('当前没有可同步的其他账号', 'danger')
+    return
+  }
+
+  settingsSyncMode.value = 'all'
+  settingsSyncTargetIds.value = []
+  settingsSyncModalVisible.value = true
+}
+
+function closeSettingsSyncModal() {
+  if (settingsSyncSaving.value)
+    return
+  settingsSyncModalVisible.value = false
+}
+
+function setSettingsSyncMode(mode: 'all' | 'selected') {
+  settingsSyncMode.value = mode
+  if (mode === 'all')
+    settingsSyncTargetIds.value = []
+}
+
+function toggleSettingsSyncTarget(accountId: string) {
+  const normalizedId = String(accountId || '').trim()
+  if (!normalizedId)
+    return
+
+  if (settingsSyncTargetIds.value.includes(normalizedId)) {
+    settingsSyncTargetIds.value = settingsSyncTargetIds.value.filter(id => id !== normalizedId)
+    return
+  }
+
+  settingsSyncTargetIds.value = [...settingsSyncTargetIds.value, normalizedId]
+}
+
+function selectAllSettingsSyncTargets() {
+  settingsSyncTargetIds.value = syncableAccounts.value.map(account => String(account?.id || '')).filter(Boolean)
+}
+
+function clearSettingsSyncTargets() {
+  settingsSyncTargetIds.value = []
+}
+
+function getSettingsSyncAccountName(account: any) {
+  return String(account?.name || account?.nick || account?.id || '').trim()
+}
+
+async function handleSyncAccountSettings() {
+  if (!currentAccountId.value)
+    return
+
+  if (settingsSyncMode.value === 'selected' && selectedSettingsSyncCount.value === 0) {
+    showAlert('请至少选择一个目标账号', 'danger')
+    return
+  }
+
+  const settingsPayload = buildAccountSettingsPayload()
+  settingsSyncSaving.value = true
+  try {
+    const res = await settingStore.syncSettings(currentAccountId.value, {
+      targetMode: settingsSyncMode.value,
+      targetAccountIds: settingsSyncTargetIds.value,
+      settings: settingsPayload,
+    })
+
+    if (!res.ok) {
+      showAlert(`同步失败: ${res.error || '未知错误'}`, 'danger')
+      return
+    }
+
+    const targetAccounts = Array.isArray(res.data?.targetAccounts) ? res.data.targetAccounts : []
+    const previewNames = targetAccounts.map(account => account.name || account.id).slice(0, 5).join('、')
+    const suffix = targetAccounts.length > 5 ? ` 等 ${targetAccounts.length} 个账号` : ''
+    const detailText = previewNames ? `：${previewNames}${suffix}` : ''
+    settingsSyncModalVisible.value = false
+    showAlert(`已将当前页面的策略与自动控制同步到 ${targetAccounts.length} 个账号${detailText}`)
+  }
+  finally {
+    settingsSyncSaving.value = false
   }
 }
 
@@ -1585,15 +1705,28 @@ async function handleTestOffline() {
         </div>
 
         <!-- Save Button -->
-        <div class="mt-auto flex justify-end border-t bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/50">
-          <BaseButton
-            variant="primary"
-            size="sm"
-            :loading="saving"
-            @click="saveAccountSettings"
-          >
-            保存策略与自动控制
-          </BaseButton>
+        <div class="mt-auto flex flex-col gap-3 border-t bg-gray-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-gray-700 dark:bg-gray-900/50">
+          <div class="text-xs text-gray-500 dark:text-gray-400">
+            当前页策略可一键同步到其他账号。
+          </div>
+          <div class="flex justify-end gap-2">
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              :disabled="saving || !currentAccountId || syncableAccounts.length === 0"
+              @click="openSettingsSyncModal"
+            >
+              同步到其他账号
+            </BaseButton>
+            <BaseButton
+              variant="primary"
+              size="sm"
+              :loading="saving"
+              @click="saveAccountSettings"
+            >
+              保存策略与自动控制
+            </BaseButton>
+          </div>
         </div>
       </div>
 
@@ -1925,6 +2058,141 @@ async function handleTestOffline() {
       @confirm="modalVisible = false"
       @cancel="modalVisible = false"
     />
+
+    <div
+      v-if="settingsSyncModalVisible"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+      @click="closeSettingsSyncModal"
+    >
+      <div class="max-h-[85vh] max-w-2xl w-full overflow-y-auto rounded-xl bg-white shadow-2xl dark:bg-gray-800" @click.stop>
+        <div class="border-b px-5 py-4 dark:border-gray-700">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h3 class="text-lg text-gray-900 font-bold dark:text-gray-100">
+                同步账号设置
+              </h3>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                将当前账号「{{ currentAccountName || currentAccountId }}」页面上的策略与自动控制同步到其他账号。
+              </p>
+            </div>
+            <button
+              class="rounded p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+              :disabled="settingsSyncSaving"
+              @click="closeSettingsSyncModal"
+            >
+              <div class="i-carbon-close text-lg" />
+            </button>
+          </div>
+        </div>
+
+        <div class="px-5 py-4 space-y-4">
+          <div class="rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-600 dark:bg-gray-900/50 dark:text-gray-300">
+            只会同步“策略与自动控制”这部分，不会影响运行时连接、二维码接口、下线提醒等全局设置。
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            <button
+              class="rounded-full px-3 py-1.5 text-sm transition"
+              :class="settingsSyncMode === 'all'
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'"
+              @click="setSettingsSyncMode('all')"
+            >
+              同步到全部账号
+            </button>
+            <button
+              class="rounded-full px-3 py-1.5 text-sm transition"
+              :class="settingsSyncMode === 'selected'
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'"
+              @click="setSettingsSyncMode('selected')"
+            >
+              多选账号同步
+            </button>
+          </div>
+
+          <div class="text-sm text-gray-500 dark:text-gray-400">
+            {{ settingsSyncSummaryText }}
+          </div>
+
+          <div v-if="settingsSyncMode === 'selected'" class="space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="text-sm text-gray-700 font-medium dark:text-gray-200">
+                目标账号
+              </div>
+              <div class="flex gap-2">
+                <BaseButton
+                  variant="text"
+                  size="sm"
+                  @click="selectAllSettingsSyncTargets"
+                >
+                  全选
+                </BaseButton>
+                <BaseButton
+                  variant="text"
+                  size="sm"
+                  @click="clearSettingsSyncTargets"
+                >
+                  清空
+                </BaseButton>
+              </div>
+            </div>
+
+            <div class="max-h-72 overflow-y-auto rounded-lg bg-gray-50 p-3 space-y-2 dark:bg-gray-900/50">
+              <label
+                v-for="account in syncableAccounts"
+                :key="account.id"
+                class="flex cursor-pointer items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 transition dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/70"
+              >
+                <div class="min-w-0 flex items-center gap-3">
+                  <input
+                    :checked="settingsSyncTargetIds.includes(String(account.id))"
+                    type="checkbox"
+                    class="h-4 w-4"
+                    @change="toggleSettingsSyncTarget(String(account.id))"
+                  >
+                  <div class="min-w-0">
+                    <div class="truncate text-sm text-gray-800 font-medium dark:text-gray-100">
+                      {{ getSettingsSyncAccountName(account) }}
+                    </div>
+                    <div class="truncate text-xs text-gray-400">
+                      ID {{ account.id }}
+                    </div>
+                  </div>
+                </div>
+                <span
+                  v-if="getPlatformLabel(account.platform)"
+                  class="shrink-0 rounded-full px-2 py-0.5 text-xs"
+                  :class="getPlatformClass(account.platform)"
+                >
+                  {{ getPlatformLabel(account.platform) }}
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 border-t px-5 py-4 dark:border-gray-700">
+          <BaseButton
+            variant="secondary"
+            size="sm"
+            :disabled="settingsSyncSaving"
+            @click="closeSettingsSyncModal"
+          >
+            取消
+          </BaseButton>
+          <BaseButton
+            variant="primary"
+            size="sm"
+            :disabled="settingsSyncSaving || (settingsSyncMode === 'selected' && selectedSettingsSyncCount === 0)"
+            :loading="settingsSyncSaving"
+            @click="handleSyncAccountSettings"
+          >
+            开始同步
+          </BaseButton>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 

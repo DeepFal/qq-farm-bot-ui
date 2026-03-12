@@ -36,6 +36,23 @@ function createDataProvider(options) {
         return findAccountByRef(getStoredAccountsList(), accountRef);
     }
 
+    function buildAccountSettingsSnapshot(payload) {
+        const body = (payload && typeof payload === 'object') ? payload : {};
+        const plantingStrategy = (body.plantingStrategy !== undefined) ? body.plantingStrategy : body.strategy;
+        const preferredSeedId = (body.preferredSeedId !== undefined) ? body.preferredSeedId : body.seedId;
+        return {
+            plantingStrategy,
+            preferredSeedId,
+            bagSeedPriority: body.bagSeedPriority,
+            bagSeedFallbackStrategy: body.bagSeedFallbackStrategy,
+            intervals: body.intervals,
+            friendQuietHours: body.friendQuietHours,
+            automation: body.automation,
+            knownFriendGids: body.knownFriendGids,
+            knownFriendGidSyncCooldownSec: body.knownFriendGidSyncCooldownSec,
+        };
+    }
+
     return {
         resolveAccountId: (accountRef) => resolveAccountRefId(accountRef),
 
@@ -124,19 +141,7 @@ function createDataProvider(options) {
             if (!accountId) {
                 throw new Error('Missing x-account-id');
             }
-            const body = (payload && typeof payload === 'object') ? payload : {};
-            const plantingStrategy = (body.plantingStrategy !== undefined) ? body.plantingStrategy : body.strategy;
-            const preferredSeedId = (body.preferredSeedId !== undefined) ? body.preferredSeedId : body.seedId;
-            const snapshot = {
-                plantingStrategy,
-                preferredSeedId,
-                bagSeedPriority: body.bagSeedPriority,
-                bagSeedFallbackStrategy: body.bagSeedFallbackStrategy,
-                intervals: body.intervals,
-                friendQuietHours: body.friendQuietHours,
-                knownFriendGids: body.knownFriendGids,
-                knownFriendGidSyncCooldownSec: body.knownFriendGidSyncCooldownSec,
-            };
+            const snapshot = buildAccountSettingsSnapshot(payload);
             store.applyConfigSnapshot(snapshot, { accountId });
             const rev = nextConfigRevision();
             broadcastConfigToWorkers(accountId);
@@ -151,6 +156,39 @@ function createDataProvider(options) {
                 knownFriendGidSyncCooldownSec: store.getKnownFriendGidSyncCooldownSec
                     ? store.getKnownFriendGidSyncCooldownSec(accountId)
                     : 600,
+                configRevision: rev,
+            };
+        },
+
+        syncAccountSettings: async (targetAccountRefs, payload) => {
+            const sourceList = Array.isArray(targetAccountRefs) ? targetAccountRefs : [];
+            const targetAccountIds = [...new Set(
+                sourceList
+                    .map(accountRef => resolveAccountRefId(accountRef))
+                    .filter(Boolean),
+            )];
+
+            if (targetAccountIds.length === 0) {
+                return {
+                    targetCount: 0,
+                    targetAccountIds: [],
+                    configRevision: nextConfigRevision(),
+                };
+            }
+
+            const snapshot = buildAccountSettingsSnapshot(payload);
+            for (const accountId of targetAccountIds) {
+                store.applyConfigSnapshot(snapshot, { accountId });
+            }
+
+            const rev = nextConfigRevision();
+            for (const accountId of targetAccountIds) {
+                broadcastConfigToWorkers(accountId);
+            }
+
+            return {
+                targetCount: targetAccountIds.length,
+                targetAccountIds,
                 configRevision: rev,
             };
         },
