@@ -354,6 +354,8 @@ function normalizeFertilizerBuyAutomation(automation) {
         next.fertilizer_buy_type = 'organic';
     }
     return next;
+}
+
 function normalizeFriendCache(input) {
     if (!Array.isArray(input)) return [];
     const seen = new Set();
